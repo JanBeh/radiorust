@@ -1,0 +1,20 @@
+[package]
+name = "radiorust"
+version = "0.0.1"
+authors = ["Jan Behrens <jbe@magnetkern.de>"]
+edition = "2021"
+description = "Software Defined Radio using the Tokio runtime"
+license = "MIT OR Apache-2.0"
+keywords = ["sdr", "radio"]
+
+[dependencies]
+soapysdr = "0.3.2"
+num = "0.4.0"
+rustfft = "6.0.1"
+cpal = "0.14.0"
+tokio = { version = "1.21.1", features = ["full"] }
+
+[dev-dependencies]
+#relm4 = { version = "0.4.4", features = ["tokio-rt"] }
+relm4 = { version = "0.4.4" }
+relm4-macros = { version = "0.4.4" }

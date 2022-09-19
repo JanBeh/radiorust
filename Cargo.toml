@@ -4,6 +4,7 @@ version = "0.0.2"
 authors = ["Jan Behrens <jbe@magnetkern.de>"]
 edition = "2021"
 description = "Software Defined Radio using the Tokio runtime"
+repository = "https://github.com/JanBeh/radiorust"
 license = "MIT OR Apache-2.0"
 keywords = ["sdr", "radio"]
 

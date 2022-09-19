@@ -1,5 +1,47 @@
 //! Data flow between [blocks]
 //!
+//! # Example
+//!
+//! The following toy example passes a `String` from a [`Producer`] to a
+//! [`Consumer`]. For radio applications, you will usually pass [`Samples`]
+//! instead.
+//!
+//! [`Samples`]: crate::blocks::Samples
+//!
+//! ```
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async move {
+//! use radiorust::flow::*;
+//!
+//! struct MySource {
+//!     sender: Sender<String>,
+//!     /* extra fields can go here */
+//! }
+//! impl Producer<String> for MySource {
+//!     fn connector(&self) -> SenderConnector<'_, String> {
+//!         self.sender.connector()
+//!     }
+//! }
+//!
+//! struct MySink {
+//!     receiver: Receiver<String>,
+//!     /* extra fields can go here */
+//! }
+//! impl Consumer<String> for MySink {
+//!     fn receiver(&self) -> &Receiver<String> {
+//!         &self.receiver
+//!     }
+//! }
+//!
+//! let src = MySource { sender: Sender::new() };
+//! let dst = MySink { receiver: Receiver::new() };
+//!
+//! dst.connect_to_producer(&src);
+//! let mut stream: ReceiverStream<String> = dst.receiver.stream();
+//! src.sender.send("Hello World!".to_string()).await;
+//! assert_eq!(stream.recv().await.unwrap(), "Hello World!".to_string());
+//! # });
+//! ```
+//!
 //! [blocks]: crate::blocks
 
 use tokio::sync::{broadcast, watch};

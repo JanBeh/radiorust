@@ -1,6 +1,21 @@
 //! Pools allowing to get buffers that are recycled when dropped
 //!
-//! See example in [`ChunkBufPool`].
+//! Most [blocks] will produce and/or consume [`Chunk<T>`]s. To create such
+//! `Chunk`s, you must first create a [`ChunkBufPool`] from which you can
+//! obtain a [`ChunkBuf`], which can be treated and filled like a [`Vec`].
+//! When all data has been added to the `ChunkBuf`, it can be [finalized] and
+//! thus converted into a [`Chunk`].
+//!
+//! Because it's inefficient to always allocate new `Vec`s when a new chunk of
+//! data is prepared, this module provides a way to "recycle" the underlying
+//! `Vec` of a [`Chunk`]. This works by counting clones of the `Chunk` (or
+//! parts thereof) through an internal [`Arc`] and sending the [`Vec`] back to
+//! the originating pool (`ChunkBufPool`) when the last clone is dropped.
+//!
+//! See [`ChunkBufPool`] for an example.
+//!
+//! [blocks]: crate::blocks
+//! [finalized]: ChunkBuf::finalize
 
 use tokio::sync::mpsc;
 

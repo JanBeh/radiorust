@@ -49,7 +49,7 @@ impl SimpleSdr {
         downsample2.connect_to_producer(&filter2);
 
         /*
-        let writer = blocks::io::raw::ContinuousF32BeWriter::with_path("output.raw");
+        let writer = blocks::io::raw_out::ContinuousF32BeWriter::with_path("output.raw");
         writer.connect_to_producer(&downsample2);
         std::mem::forget(writer); // quick and dirty
         */

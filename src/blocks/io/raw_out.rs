@@ -1,4 +1,4 @@
-//! Raw I/Q data I/O
+//! Raw I/Q data output
 
 use crate::blocks::Samples;
 use crate::flow::*;

@@ -53,8 +53,8 @@ struct FilterParams {
 /// Behavior of the filter is controlled by passing a closure to one of the
 /// filter's methods. The closure is called with a DFT bin index (which may be
 /// ignored in most cases) and the corresponding *signed* frequency (as [`f64`]
-/// in hertz). The closure must then return a complex amplification factor (as
-/// [`Complex<f64>`]) for the given frequency.
+/// in hertz) as arguments. The closure must then return a complex
+/// amplification factor (as [`Complex<f64>`]) for the given frequency.
 ///
 /// ```
 /// # use radiorust::*;

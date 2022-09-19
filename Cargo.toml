@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["sdr", "radio"]
 
 [features]
-default = ["cpal", "soapy"]
+full-io = ["cpal", "soapy"]
 cpal = ["dep:cpal"]
 soapy = ["dep:soapysdr"]
 
@@ -24,6 +24,10 @@ tokio = { version = "1.21.1", features = ["full"] }
 #relm4 = { version = "0.4.4", features = ["tokio-rt"] }
 relm4 = { version = "0.4.4" }
 relm4-macros = { version = "0.4.4" }
+
+[[example]]
+name = "relm_app"
+required-features = ["cpal", "soapy"]
 
 [package.metadata.docs.rs]
 no-default-features = true

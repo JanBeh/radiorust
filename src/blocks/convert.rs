@@ -348,19 +348,31 @@ where
 {
     /// Create new `Downsampler` block
     ///
+    /// This call corresponds to [`Downsampler::with_quality`] with a `quality`
+    /// value of `3.0`.
+    ///
     /// Connected [`Producer`]s must emit [`Samples`] with a [`sample_rate`]
     /// equal to or higher than `output_rate`; otherwise a panic occurs.
     ///
     /// Aliasing is suppressed for frequencies lower than `bandwidth`.
-    /// The optional quality setting must be equal to or greater than `1.0`
-    /// (currently defaulting to `3.0`).
     ///
     /// [`sample_rate`]: Samples::sample_rate
     pub fn new(
         output_chunk_len: usize,
         output_rate: f64,
         bandwidth: f64,
-        quality: Option<f64>,
+    ) -> Self {
+        Self::with_quality(output_chunk_len, output_rate, bandwidth, 3.0)
+    }
+    /// Create new `Downsampler` block with `quality` setting
+    ///
+    /// Same as [`Downsampler::new`], but allows to specify a `quality`
+    /// setting, which must be equal to or greater than `1.0`.
+    pub fn with_quality(
+        output_chunk_len: usize,
+        output_rate: f64,
+        bandwidth: f64,
+        quality: f64,
     ) -> Self {
         assert!(output_rate >= 0.0, "output sample rate must be positive");
         assert!(bandwidth >= 0.0, "bandwidth must be positive");
@@ -375,7 +387,6 @@ where
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut output_chunk = buf_pool.get_with_capacity(output_chunk_len);
         spawn(async move {
-            let quality = quality.unwrap_or(3.0);
             let margin = (output_rate - bandwidth) / 2.0;
             let mut prev_input_rate: Option<f64> = None;
             let mut ir: Vec<Flt> = Default::default();
@@ -489,20 +500,32 @@ where
 {
     /// Create new `Upsampler` block
     ///
+    /// This call corresponds to [`Upsampler::with_quality`] with a `quality`
+    /// value of `3.0`.
+    ///
     /// Connected [`Producer`]s must emit [`Samples`] with a [`sample_rate`]
     /// equal to or smaller than `output_rate` but larger than `bandwidth`;
     /// otherwise a panic occurs.
     ///
     /// Aliasing is suppressed for frequencies lower than `bandwidth`.
-    /// The optional quality setting must be equal to or greater than `1.0`
-    /// (currently defaulting to `3.0`).
     ///
     /// [`sample_rate`]: Samples::sample_rate
     pub fn new(
         output_chunk_len: usize,
         output_rate: f64,
         bandwidth: f64,
-        quality: Option<f64>,
+    ) -> Self {
+        Self::with_quality(output_chunk_len, output_rate, bandwidth, 3.0)
+    }
+    /// Create new `Upsampler` block with `quality` setting
+    ///
+    /// Same as [`Upsampler::new`], but allows to specify a `quality` setting,
+    /// which must be equal to or greater than `1.0`.
+    pub fn with_quality(
+        output_chunk_len: usize,
+        output_rate: f64,
+        bandwidth: f64,
+        quality: f64,
     ) -> Self {
         assert!(output_rate >= 0.0, "output sample rate must be positive");
         assert!(bandwidth >= 0.0, "bandwidth must be positive");
@@ -513,7 +536,6 @@ where
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut output_chunk = buf_pool.get_with_capacity(output_chunk_len);
         spawn(async move {
-            let quality = quality.unwrap_or(3.0);
             let mut prev_input_rate: Option<f64> = None;
             let mut ir: Vec<Flt> = Default::default();
             let mut ringbuf: Vec<Complex<Flt>> = Default::default();

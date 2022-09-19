@@ -20,7 +20,7 @@ impl SimpleSdr {
         let freq_shifter = blocks::convert::FreqShifter::<f32>::with_shift(0.3e6);
         freq_shifter.connect_to_producer(&sdr);
 
-        let downsample1 = blocks::convert::Downsampler::<f32>::new(16384, 384000.0, 200000.0, None);
+        let downsample1 = blocks::convert::Downsampler::<f32>::new(16384, 384000.0, 200000.0);
         downsample1.connect_to_producer(&freq_shifter);
 
         let filter1 = blocks::filters::Filter::new(|_, freq| {
@@ -45,7 +45,7 @@ impl SimpleSdr {
         filter2.connect_to_producer(&demodulator);
 
         let downsample2 =
-            blocks::convert::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0, None);
+            blocks::convert::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
         downsample2.connect_to_producer(&filter2);
 
         /*

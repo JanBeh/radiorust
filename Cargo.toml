@@ -7,14 +7,22 @@ description = "Software Defined Radio using the Tokio runtime"
 license = "MIT OR Apache-2.0"
 keywords = ["sdr", "radio"]
 
+[features]
+default = ["cpal", "soapy"]
+cpal = ["dep:cpal"]
+soapy = ["dep:soapysdr"]
+
 [dependencies]
-soapysdr = "0.3.2"
+soapysdr = { version = "0.3.2", optional = true }
 num = "0.4.0"
 rustfft = "6.0.1"
-cpal = "0.14.0"
+cpal = { version = "0.14.0", optional = true }
 tokio = { version = "1.21.1", features = ["full"] }
 
 [dev-dependencies]
 #relm4 = { version = "0.4.4", features = ["tokio-rt"] }
 relm4 = { version = "0.4.4" }
 relm4-macros = { version = "0.4.4" }
+
+[package.metadata.docs.rs]
+no-default-features = true

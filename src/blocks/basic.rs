@@ -10,6 +10,63 @@ use num::Complex;
 use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
 
+/// Block which performs no operation on the received data and simply sends it
+/// out unchanged
+///
+/// This block mostly serves documentation purposes but may also be used to
+/// (re-)connect multiple [`Receiver`]s at once.
+/// Note that most blocks don't work with `T` but [`Samples<T>`] or
+/// `Samples<Complex<Flt>>`.
+pub struct Nop<T> {
+    receiver: Receiver<T>,
+    sender: Sender<T>,
+}
+
+impl<T> Consumer<T> for Nop<T>
+where
+    T: Clone,
+{
+    fn receiver(&self) -> &Receiver<T> {
+        &self.receiver
+    }
+}
+
+impl<T> Producer<T> for Nop<T>
+where
+    T: Clone,
+{
+    fn connector(&self) -> SenderConnector<T> {
+        self.sender.connector()
+    }
+}
+
+impl<T> Nop<T>
+where
+    T: Clone + Send + 'static,
+{
+    /// Creates a block which does nothing but pass data through
+    pub fn new() -> Self {
+        let receiver = Receiver::<T>::new();
+        let sender = Sender::<T>::new();
+        let mut input: ReceiverStream<T> = receiver.stream();
+        let output: Sender<T> = sender.clone();
+        spawn(async move {
+            loop {
+                match input.recv().await {
+                    Ok(msg) => output.send(msg).await,
+                    Err(err) => {
+                        output.forward_error(err).await;
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self { receiver, sender }
+    }
+}
+
 /// Block which receives [`Samples<T>`] and applies a closure to every sample,
 /// e.g. to change amplitude or to apply a constant phase shift, before sending
 /// it further.

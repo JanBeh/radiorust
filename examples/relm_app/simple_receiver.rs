@@ -50,7 +50,9 @@ impl SimpleSdr {
         /*
         let writer = blocks::io::raw_out::ContinuousF32BeWriter::with_path("output.raw");
         writer.connect_to_producer(&downsample2);
-        std::mem::forget(writer); // quick and dirty
+        tokio::spawn(async move {
+            writer.wait().await;
+        });
         */
 
         let playback = blocks::io::audio::Audio::for_playback(48000.0, 2 * 4096);

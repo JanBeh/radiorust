@@ -5,6 +5,7 @@ use crate::flow::*;
 use crate::samples::Samples;
 
 use num::Complex;
+use tokio::sync::oneshot;
 use tokio::task::{spawn, JoinHandle};
 use tokio::time::{interval, MissedTickBehavior};
 
@@ -20,6 +21,7 @@ use std::time::Duration;
 /// callback.
 pub struct ClosureSource<T, E> {
     sender: Sender<Samples<T>>,
+    abort: oneshot::Sender<()>,
     join_handle: JoinHandle<Result<(), E>>,
 }
 
@@ -61,10 +63,16 @@ where
     {
         let sender = Sender::<Samples<T>>::new();
         let output = sender.clone();
+        let (abort_send, mut abort_recv) = oneshot::channel::<()>();
         let join_handle = spawn(async move {
             let mut clock = interval(Duration::from_secs_f64(sample_rate / chunk_len as f64));
             clock.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
+                match abort_recv.try_recv() {
+                    Ok(()) => unreachable!(),
+                    Err(oneshot::error::TryRecvError::Empty) => (),
+                    Err(oneshot::error::TryRecvError::Closed) => return Ok(()),
+                }
                 match retrieve().await {
                     Ok(Some(chunk)) => {
                         assert_eq!(chunk.len(), chunk_len);
@@ -84,6 +92,7 @@ where
         });
         Self {
             sender,
+            abort: abort_send,
             join_handle,
         }
     }
@@ -93,7 +102,7 @@ where
     }
     /// Stop operation
     pub async fn stop(self) -> Result<(), E> {
-        // TODO: force stopping
+        drop(self.abort);
         self.join_handle.await.expect("task panicked")
     }
 }

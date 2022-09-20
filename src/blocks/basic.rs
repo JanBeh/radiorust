@@ -7,8 +7,119 @@ use crate::samples::Samples;
 
 use num::rational::Ratio;
 use num::Complex;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
+
+/// Block which receives [`Samples<T>`] and applies a closure to every sample,
+/// e.g. to change amplitude or to apply a constant phase shift, before sending
+/// it further.
+///
+/// # Example
+///
+/// ```
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async move {
+/// use radiorust::blocks::Function;
+/// use num::Complex;
+/// let attenuate_6db = Function::<Complex<f32>>::with_closure(move |x| x / 2.0);
+/// # });
+/// ```
+pub struct Function<T> {
+    receiver: Receiver<Samples<T>>,
+    sender: Sender<Samples<T>>,
+    closure: mpsc::UnboundedSender<Box<dyn Fn(T) -> T + Send + Sync + 'static>>,
+}
+
+impl<T> Consumer<Samples<T>> for Function<T>
+where
+    T: Clone,
+{
+    fn receiver(&self) -> &Receiver<Samples<T>> {
+        &self.receiver
+    }
+}
+
+impl<T> Producer<Samples<T>> for Function<T>
+where
+    T: Clone,
+{
+    fn connector(&self) -> SenderConnector<Samples<T>> {
+        self.sender.connector()
+    }
+}
+
+impl<T> Function<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    /// Creates a block which doesn't modify the [`Samples`]
+    pub fn new() -> Self {
+        Self::with_closure(|x| x)
+    }
+    /// Creates a block which applies the given `closure` to every sample
+    pub fn with_closure<F>(closure: F) -> Self
+    where
+        F: Fn(T) -> T + Send + Sync + 'static,
+    {
+        Self::new_internal(Box::new(closure))
+    }
+    fn new_internal(closure: Box<dyn Fn(T) -> T + Send + Sync + 'static>) -> Self {
+        let receiver = Receiver::<Samples<T>>::new();
+        let sender = Sender::new();
+        let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
+        closure_send.send(closure).ok();
+        let mut input = receiver.stream();
+        let output = sender.clone();
+        spawn(async move {
+            let mut buf_pool = ChunkBufPool::new();
+            let mut closure_opt: Option<Box<dyn Fn(T) -> T + Send + Sync + 'static>> = None;
+            loop {
+                match input.recv().await {
+                    Ok(Samples {
+                        sample_rate,
+                        chunk: input_chunk,
+                    }) => {
+                        loop {
+                            match closure_recv.try_recv() {
+                                Ok(f) => closure_opt = Some(f),
+                                Err(mpsc::error::TryRecvError::Empty) => break,
+                                Err(mpsc::error::TryRecvError::Disconnected) => return,
+                            }
+                        }
+                        let closure = closure_opt.as_ref().unwrap();
+                        let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
+                        for sample in input_chunk.iter() {
+                            output_chunk.push(closure(sample.clone()));
+                        }
+                        output
+                            .send(Samples {
+                                sample_rate: sample_rate,
+                                chunk: output_chunk.finalize(),
+                            })
+                            .await;
+                    }
+                    Err(err) => {
+                        output.forward_error(err).await;
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            receiver,
+            sender,
+            closure: closure_send,
+        }
+    }
+    /// Modifies the used `closure`, which is applied to every sample
+    pub fn set_closure<F>(&self, closure: F)
+    where
+        F: Fn(T) -> T + Send + Sync + 'static,
+    {
+        self.closure.send(Box::new(closure)).ok();
+    }
+}
 
 /// Block that receives [`Samples`] with arbitrary chunk lengths and produces
 /// `Samples` with fixed chunk length

@@ -10,6 +10,7 @@ pub struct SimpleSdr {
     pub demodulator: blocks::modulation::FmDemod<f32>,
     pub filter2: blocks::filters::Filter<f32>,
     pub downsample2: blocks::Downsampler<f32>,
+    pub volume: blocks::Function<Complex<f32>>,
     pub playback: blocks::io::audio::Audio,
 }
 
@@ -55,8 +56,11 @@ impl SimpleSdr {
         });
         */
 
+        let volume = blocks::Function::<Complex<f32>>::new();
+        volume.connect_to_producer(&downsample2);
+
         let playback = blocks::io::audio::Audio::for_playback(48000.0, 2 * 4096);
-        playback.connect_to_producer(&downsample2);
+        playback.connect_to_producer(&volume);
 
         SimpleSdr {
             sdr,
@@ -66,6 +70,7 @@ impl SimpleSdr {
             demodulator,
             filter2,
             downsample2,
+            volume,
             playback,
         }
     }

@@ -9,9 +9,12 @@ use simple_receiver::*;
 struct AppModel {
     _rt: Runtime,
     simple_sdr: SimpleSdr,
+    volume: f64,
 }
 
 enum AppMsg {
+    VolumeUp,
+    VolumeDown,
     FreqUp,
     FreqDown,
 }
@@ -25,6 +28,16 @@ impl Model for AppModel {
 impl AppUpdate for AppModel {
     fn update(&mut self, msg: AppMsg, _components: &(), _sender: Sender<AppMsg>) -> bool {
         match msg {
+            AppMsg::VolumeUp => {
+                self.volume *= 2.0f64.sqrt();
+                let vol = self.volume as f32;
+                self.simple_sdr.volume.set_closure(move |x| x * vol);
+            }
+            AppMsg::VolumeDown => {
+                self.volume /= 2.0f64.sqrt();
+                let vol = self.volume as f32;
+                self.simple_sdr.volume.set_closure(move |x| x * vol);
+            }
             AppMsg::FreqUp => {
                 let mut shift = self.simple_sdr.freq_shifter.shift();
                 shift += 0.1e6;
@@ -51,6 +64,16 @@ impl Widgets<AppModel, ()> for AppWidgets {
                 set_orientation: gtk::Orientation::Vertical,
                 set_margin_all: 5,
                 set_spacing: 5,
+                append = &gtk::Button::with_label("VolumeUp") {
+                    connect_clicked(sender) => move |_| {
+                        send!(sender, AppMsg::VolumeUp);
+                    },
+                },
+                append = &gtk::Button::with_label("VolumeDown") {
+                    connect_clicked(sender) => move |_| {
+                        send!(sender, AppMsg::VolumeDown);
+                    },
+                },
                 append = &gtk::Button::with_label("FreqUp") {
                     connect_clicked(sender) => move |_| {
                         send!(sender, AppMsg::FreqUp);
@@ -74,6 +97,7 @@ fn main() {
     let model = AppModel {
         _rt: rt,
         simple_sdr,
+        volume: 1.0,
     };
     let app = RelmApp::new(model);
     app.run();

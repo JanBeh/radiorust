@@ -357,11 +357,7 @@ where
     /// Aliasing is suppressed for frequencies lower than `bandwidth`.
     ///
     /// [`sample_rate`]: Samples::sample_rate
-    pub fn new(
-        output_chunk_len: usize,
-        output_rate: f64,
-        bandwidth: f64,
-    ) -> Self {
+    pub fn new(output_chunk_len: usize, output_rate: f64, bandwidth: f64) -> Self {
         Self::with_quality(output_chunk_len, output_rate, bandwidth, 3.0)
     }
     /// Create new `Downsampler` block with `quality` setting
@@ -510,11 +506,7 @@ where
     /// Aliasing is suppressed for frequencies lower than `bandwidth`.
     ///
     /// [`sample_rate`]: Samples::sample_rate
-    pub fn new(
-        output_chunk_len: usize,
-        output_rate: f64,
-        bandwidth: f64,
-    ) -> Self {
+    pub fn new(output_chunk_len: usize, output_rate: f64, bandwidth: f64) -> Self {
         Self::with_quality(output_chunk_len, output_rate, bandwidth, 3.0)
     }
     /// Create new `Upsampler` block with `quality` setting

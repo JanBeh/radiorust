@@ -44,8 +44,7 @@ impl SimpleSdr {
         });
         filter2.connect_to_producer(&demodulator);
 
-        let downsample2 =
-            blocks::convert::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
+        let downsample2 = blocks::convert::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
         downsample2.connect_to_producer(&filter2);
 
         /*

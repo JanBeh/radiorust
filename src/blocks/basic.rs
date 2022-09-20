@@ -121,7 +121,7 @@ where
     }
     fn new_internal(closure: Box<dyn Fn(T) -> T + Send + Sync + 'static>) -> Self {
         let receiver = Receiver::<Samples<T>>::new();
-        let sender = Sender::new();
+        let sender = Sender::<Samples<T>>::new();
         let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
         closure_send.send(closure).ok();
         let mut input = receiver.stream();
@@ -391,7 +391,7 @@ where
             Ratio::new(numer, denom)
         };
         let receiver = Receiver::<Samples<Complex<Flt>>>::new();
-        let sender = Sender::new();
+        let sender = Sender::<Samples<Complex<Flt>>>::new();
         let (shift_send, mut shift_recv) = watch::channel(shift);
         let mut input = receiver.stream();
         let output = sender.clone();

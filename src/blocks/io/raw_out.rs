@@ -7,7 +7,7 @@ use num::Complex;
 use tokio::task::{spawn, JoinHandle};
 
 use std::fs::File;
-use std::future::Future;
+use std::future::{ready, Future};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
@@ -54,7 +54,20 @@ where
     /// [`Chunk<T>`]
     ///
     /// [`Chunk<T>`]: crate::bufferpool::Chunk
-    pub fn new<F, R>(mut process: F) -> Self
+    pub fn new<F>(mut process: F) -> Self
+    where
+        F: FnMut(&[T]) -> Result<(), E> + Send + 'static,
+    {
+        Self::new_async(move |arg| ready(process(arg)))
+    }
+    /// Create block which invokes the `process` closure for each received
+    /// [`Chunk<T>`] and `await`s its result
+    ///
+    /// This function is the same as [`ContinuousClosure::new`] but accepts an
+    /// asynchronously working closure.
+    ///
+    /// [`Chunk<T>`]: crate::bufferpool::Chunk
+    pub fn new_async<F, R>(mut process: F) -> Self
     where
         F: FnMut(&[T]) -> R + Send + 'static,
         R: Future<Output = Result<(), E>> + Send,
@@ -131,13 +144,11 @@ impl ContinuousF32BeWriter {
         W: Write + Send + 'static,
     {
         let inner = ContinuousClosure::new(move |chunk: &[Complex<f32>]| {
-            std::future::ready((|| {
-                for sample in chunk.iter() {
-                    writer.write_all(&sample.re.to_be_bytes())?;
-                    writer.write_all(&sample.im.to_be_bytes())?;
-                }
-                Ok::<(), io::Error>(())
-            })())
+            for sample in chunk.iter() {
+                writer.write_all(&sample.re.to_be_bytes())?;
+                writer.write_all(&sample.im.to_be_bytes())?;
+            }
+            Ok(())
         });
         ContinuousF32BeWriter { inner }
     }

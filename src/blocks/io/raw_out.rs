@@ -11,32 +11,33 @@ use std::future::{ready, Future};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
-/// Error returned by [`ContinuousClosure::wait`] and [`ContinuousClosure::stop`]
-pub enum ContinuousClosureError<E> {
+/// Error returned by [`ContinuousClosureSink::wait`] and
+/// [`ContinuousClosureSink::stop`]
+pub enum ContinuousClosureSinkError<E> {
     /// A buffer underrun occurred
     Underrun,
     /// An error was reported by the processing closure
     Report(E),
 }
 
-enum ContinuousClosureStatus<E> {
+enum ContinuousClosureSinkStatus<E> {
     RecvError(RecvError),
     Report(E),
 }
 
-/// Block invoking an async callback for every received [`Chunk<T>`] and
-/// failing on buffer underrun
+/// Block invoking a callback for every received [`Chunk<T>`] and failing on
+/// buffer underrun
 ///
 /// The type argument `E` indicates a possible reported error type by the
 /// callback.
 ///
 /// [`Chunk<T>`]: crate::bufferpool::Chunk
-pub struct ContinuousClosure<T, E> {
+pub struct ContinuousClosureSink<T, E> {
     receiver: Receiver<Samples<T>>,
-    join_handle: JoinHandle<ContinuousClosureStatus<E>>,
+    join_handle: JoinHandle<ContinuousClosureSinkStatus<E>>,
 }
 
-impl<T, E> Consumer<Samples<T>> for ContinuousClosure<T, E>
+impl<T, E> Consumer<Samples<T>> for ContinuousClosureSink<T, E>
 where
     T: Clone,
 {
@@ -45,7 +46,7 @@ where
     }
 }
 
-impl<T, E> ContinuousClosure<T, E>
+impl<T, E> ContinuousClosureSink<T, E>
 where
     T: Clone + Send + Sync + 'static,
     E: Send + 'static,
@@ -63,8 +64,8 @@ where
     /// Create block which invokes the `process` closure for each received
     /// [`Chunk<T>`] and `await`s its result
     ///
-    /// This function is the same as [`ContinuousClosure::new`] but accepts an
-    /// asynchronously working closure.
+    /// This function is the same as [`ContinuousClosureSink::new`] but accepts
+    /// an asynchronously working closure.
     ///
     /// [`Chunk<T>`]: crate::bufferpool::Chunk
     pub fn new_async<F, R>(mut process: F) -> Self
@@ -82,9 +83,9 @@ where
                         chunk,
                     }) => match process(&chunk).await {
                         Ok(()) => (),
-                        Err(err) => return ContinuousClosureStatus::Report(err),
+                        Err(err) => return ContinuousClosureSinkStatus::Report(err),
                     },
-                    Err(err) => return ContinuousClosureStatus::RecvError(err),
+                    Err(err) => return ContinuousClosureSinkStatus::RecvError(err),
                 }
             }
         });
@@ -94,22 +95,30 @@ where
         }
     }
     /// Wait for stream to finish
-    pub async fn wait(self) -> Result<(), ContinuousClosureError<E>> {
+    pub async fn wait(self) -> Result<(), ContinuousClosureSinkError<E>> {
         match self.join_handle.await {
-            Ok(ContinuousClosureStatus::RecvError(RecvError::Finished)) => Ok(()),
-            Ok(ContinuousClosureStatus::RecvError(_)) => Err(ContinuousClosureError::Underrun),
-            Ok(ContinuousClosureStatus::Report(err)) => Err(ContinuousClosureError::Report(err)),
+            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
+            Ok(ContinuousClosureSinkStatus::RecvError(_)) => {
+                Err(ContinuousClosureSinkError::Underrun)
+            }
+            Ok(ContinuousClosureSinkStatus::Report(err)) => {
+                Err(ContinuousClosureSinkError::Report(err))
+            }
             Err(_) => panic!("task panicked"),
         }
     }
     /// Stop operation
-    pub async fn stop(self) -> Result<(), ContinuousClosureError<E>> {
+    pub async fn stop(self) -> Result<(), ContinuousClosureSinkError<E>> {
         drop(self.receiver);
         match self.join_handle.await {
-            Ok(ContinuousClosureStatus::RecvError(RecvError::Closed)) => Ok(()),
-            Ok(ContinuousClosureStatus::RecvError(RecvError::Finished)) => Ok(()),
-            Ok(ContinuousClosureStatus::RecvError(_)) => Err(ContinuousClosureError::Underrun),
-            Ok(ContinuousClosureStatus::Report(err)) => Err(ContinuousClosureError::Report(err)),
+            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Closed)) => Ok(()),
+            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
+            Ok(ContinuousClosureSinkStatus::RecvError(_)) => {
+                Err(ContinuousClosureSinkError::Underrun)
+            }
+            Ok(ContinuousClosureSinkStatus::Report(err)) => {
+                Err(ContinuousClosureSinkError::Report(err))
+            }
             Err(_) => panic!("task panicked"),
         }
     }
@@ -127,7 +136,7 @@ pub enum ContinuousWriterError {
 /// Block which writes single precision float samples in big endianess to a
 /// [writer][Write], failing on buffer underrun
 pub struct ContinuousF32BeWriter {
-    inner: ContinuousClosure<Complex<f32>, io::Error>,
+    inner: ContinuousClosureSink<Complex<f32>, io::Error>,
 }
 
 impl Consumer<Samples<Complex<f32>>> for ContinuousF32BeWriter {
@@ -143,7 +152,7 @@ impl ContinuousF32BeWriter {
     where
         W: Write + Send + 'static,
     {
-        let inner = ContinuousClosure::new(move |chunk: &[Complex<f32>]| {
+        let inner = ContinuousClosureSink::new(move |chunk: &[Complex<f32>]| {
             for sample in chunk.iter() {
                 writer.write_all(&sample.re.to_be_bytes())?;
                 writer.write_all(&sample.im.to_be_bytes())?;
@@ -158,10 +167,10 @@ impl ContinuousF32BeWriter {
             File::create(path).expect("could not open file for sink"),
         ))
     }
-    fn map_err(err: ContinuousClosureError<io::Error>) -> ContinuousWriterError {
+    fn map_err(err: ContinuousClosureSinkError<io::Error>) -> ContinuousWriterError {
         match err {
-            ContinuousClosureError::Underrun => ContinuousWriterError::Underrun,
-            ContinuousClosureError::Report(rpt) => ContinuousWriterError::Io(rpt),
+            ContinuousClosureSinkError::Underrun => ContinuousWriterError::Underrun,
+            ContinuousClosureSinkError::Report(rpt) => ContinuousWriterError::Io(rpt),
         }
     }
     /// Wait for stream to finish

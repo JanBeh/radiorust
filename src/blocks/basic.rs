@@ -122,7 +122,13 @@ where
 }
 
 /// Block that receives [`Samples`] with arbitrary chunk lengths and produces
-/// `Samples` with fixed chunk length
+/// `Samples<T>` with fixed chunk length
+///
+/// This block may be needed when a certain chunk length is required, e.g. for
+/// the [`filters::Filter`] block, unless the chunk length can be adjusted
+/// otherwise, e.g. due to an existing [`Downsampler`] or [`Upsampler`].
+///
+/// [`filters::Filter`]: crate::blocks::filters::Filter
 pub struct Rechunker<T> {
     receiver: Receiver<Samples<T>>,
     sender: Sender<Samples<T>>,

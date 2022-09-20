@@ -84,6 +84,10 @@ struct FilterParams {
 /// increase the chunk length of the received `Samples`. Note, however, that
 /// this will also increase the delay of the filter.
 ///
+/// You may use a [`Rechunker`] block to adjust the chunk length which the
+/// filter is operating with if this cannot be achieved otherwise, e.g. through
+/// an existing [`Downsampler`] or [`Upsampler`] block.
+///
 /// The impulse response is equal to the `chunk` length and the delay of the
 /// filter is one `chunk`, i.e. after the second chunk has been received, the
 /// first output chunk is ready to be sent out.
@@ -113,6 +117,9 @@ struct FilterParams {
 /// [`sample_rate`]: Samples::sample_rate
 /// [`chunk`]: Samples::chunk
 /// [`Window::Kaiser(x)`]: Window::Kaiser
+/// [`Rechunker`]: crate::blocks::Rechunker
+/// [`Downsampler`]: crate::blocks::Downsampler
+/// [`Upsampler`]: crate::blocks::Upsampler
 pub struct Filter<Flt> {
     receiver: Receiver<Samples<Complex<Flt>>>,
     sender: Sender<Samples<Complex<Flt>>>,

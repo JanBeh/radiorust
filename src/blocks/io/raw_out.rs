@@ -1,7 +1,7 @@
 //! Raw I/Q data output
 
-use crate::blocks::Samples;
 use crate::flow::*;
+use crate::samples::Samples;
 
 use num::Complex;
 use tokio::task::{spawn, JoinHandle};

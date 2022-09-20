@@ -22,8 +22,9 @@
 //! [connected]: crate::flow
 //! [produce]: crate::flow::Producer
 //! [consume]: crate::flow::Consumer
-//! [`chunk`]: Samples::chunk
-//! [`sample_rate`]: Samples::sample_rate
+//! [`Samples`]: crate::samples::Samples
+//! [`chunk`]: crate::samples::Samples::chunk
+//! [`sample_rate`]: crate::samples::Samples::sample_rate
 //! [`Complex<Flt>`]: num::Complex
 //! [`Float`]: crate::genfloat::Float
 //! [`spawn`]: tokio::task::spawn
@@ -33,18 +34,9 @@
 //! [`Producer::connect_to_consumer`]: crate::flow::Producer::connect_to_consumer
 //! [`Consumer::connect_to_producer`]: crate::flow::Consumer::connect_to_producer
 
-use crate::bufferpool::*;
+mod basic;
+pub use basic::*;
 
-pub mod convert;
 pub mod filters;
 pub mod io;
 pub mod modulation;
-
-/// A chunk of samples with a specified sample rate
-#[derive(Clone, Debug)]
-pub struct Samples<T> {
-    /// Sample rate
-    pub sample_rate: f64,
-    /// Sample data
-    pub chunk: Chunk<T>,
-}

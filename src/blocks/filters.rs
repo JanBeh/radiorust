@@ -1,11 +1,11 @@
 //! Filters
 
-use crate::blocks::Samples;
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
 use crate::genfloat::Float;
 use crate::math::*;
+use crate::samples::Samples;
 
 use num::Complex;
 use rustfft::{Fft, FftPlanner};

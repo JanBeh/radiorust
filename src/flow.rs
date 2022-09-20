@@ -6,7 +6,7 @@
 //! [`Consumer`]. For radio applications, you will usually pass [`Samples`]
 //! instead.
 //!
-//! [`Samples`]: crate::blocks::Samples
+//! [`Samples`]: crate::samples::Samples
 //!
 //! ```
 //! # tokio::runtime::Runtime::new().unwrap().block_on(async move {

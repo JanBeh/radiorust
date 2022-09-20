@@ -1,6 +1,6 @@
-use crate::blocks::Samples;
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::samples::Samples;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 use num::Complex;

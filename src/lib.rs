@@ -7,3 +7,4 @@ pub mod bufferpool;
 pub mod flow;
 pub mod genfloat;
 pub mod math;
+pub mod samples;

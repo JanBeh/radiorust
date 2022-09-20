@@ -1,15 +1,9 @@
-//! Basic conversion tasks (chunk length, sample rate, frequency)
-//!
-//! This module provides blocks to change chunk lengths and sample rates, and
-//! to shift frequencies in I/Q streams.
-
-use crate::blocks::Samples;
-
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
 use crate::genfloat::Float;
 use crate::math::*;
+use crate::samples::Samples;
 
 use num::rational::Ratio;
 use num::Complex;

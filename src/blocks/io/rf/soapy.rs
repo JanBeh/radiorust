@@ -1,6 +1,6 @@
-use crate::blocks::Samples;
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::samples::Samples;
 
 use num::Complex;
 use soapysdr::{self, Direction::Rx};

@@ -4,12 +4,12 @@ use num::Complex;
 
 pub struct SimpleSdr {
     pub sdr: blocks::io::rf::Sdr,
-    pub freq_shifter: blocks::convert::FreqShifter<f32>,
-    pub downsample1: blocks::convert::Downsampler<f32>,
+    pub freq_shifter: blocks::FreqShifter<f32>,
+    pub downsample1: blocks::Downsampler<f32>,
     pub filter1: blocks::filters::Filter<f32>,
     pub demodulator: blocks::modulation::FmDemod<f32>,
     pub filter2: blocks::filters::Filter<f32>,
-    pub downsample2: blocks::convert::Downsampler<f32>,
+    pub downsample2: blocks::Downsampler<f32>,
     pub playback: blocks::io::audio::Audio,
 }
 
@@ -17,10 +17,10 @@ impl SimpleSdr {
     pub fn new() -> Self {
         let sdr = blocks::io::rf::Sdr::for_receiving(1024000.0, 100e6, 1024000.0);
 
-        let freq_shifter = blocks::convert::FreqShifter::<f32>::with_shift(0.3e6);
+        let freq_shifter = blocks::FreqShifter::<f32>::with_shift(0.3e6);
         freq_shifter.connect_to_producer(&sdr);
 
-        let downsample1 = blocks::convert::Downsampler::<f32>::new(16384, 384000.0, 200000.0);
+        let downsample1 = blocks::Downsampler::<f32>::new(16384, 384000.0, 200000.0);
         downsample1.connect_to_producer(&freq_shifter);
 
         let filter1 = blocks::filters::Filter::new(|_, freq| {
@@ -44,7 +44,7 @@ impl SimpleSdr {
         });
         filter2.connect_to_producer(&demodulator);
 
-        let downsample2 = blocks::convert::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
+        let downsample2 = blocks::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
         downsample2.connect_to_producer(&filter2);
 
         /*

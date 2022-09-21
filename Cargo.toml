@@ -9,9 +9,9 @@ license = "MIT OR Apache-2.0"
 keywords = ["sdr", "radio"]
 
 [features]
-full-io = ["cpal", "soapy"]
+full-io = ["cpal", "soapysdr"]
 cpal = ["dep:cpal"]
-soapy = ["dep:soapysdr"]
+soapysdr = ["dep:soapysdr"]
 
 [dependencies]
 soapysdr = { version = "0.3.2", optional = true }
@@ -27,7 +27,7 @@ relm4-macros = { version = "0.4.4" }
 
 [[example]]
 name = "relm_app"
-required-features = ["cpal", "soapy"]
+required-features = ["cpal", "soapysdr"]
 
 [package.metadata.docs.rs]
 no-default-features = true

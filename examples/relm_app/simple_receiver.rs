@@ -1,9 +1,12 @@
 use crate::blocks;
 use crate::flow::*;
+
 use num::Complex;
+use soapysdr::Direction::Rx;
 
 pub struct SimpleSdr {
-    pub sdr: blocks::io::rf::Sdr,
+    pub device: soapysdr::Device,
+    pub sdr_rx: blocks::io::rf::SoapySdrRx,
     pub freq_shifter: blocks::FreqShifter<f32>,
     pub downsample1: blocks::Downsampler<f32>,
     pub filter1: blocks::filters::Filter<f32>,
@@ -16,10 +19,19 @@ pub struct SimpleSdr {
 
 impl SimpleSdr {
     pub fn new() -> Self {
-        let sdr = blocks::io::rf::Sdr::for_receiving(1024000.0, 100e6, 1024000.0);
+        let frequency = 100e6;
+        let sample_rate = 1024000.0;
+        let bandwidth = 1024000.0;
+        let device = soapysdr::Device::new("").unwrap();
+        device.set_frequency(Rx, 0, frequency, "").unwrap();
+        device.set_sample_rate(Rx, 0, sample_rate).unwrap();
+        device.set_bandwidth(Rx, 0, bandwidth).unwrap();
+        let rx_stream = device.rx_stream::<Complex<f32>>(&[0]).unwrap();
+        let mut sdr_rx = blocks::io::rf::SoapySdrRx::new(rx_stream, sample_rate);
+        sdr_rx.activate().unwrap();
 
         let freq_shifter = blocks::FreqShifter::<f32>::with_shift(0.3e6);
-        freq_shifter.connect_to_producer(&sdr);
+        freq_shifter.connect_to_producer(&sdr_rx);
 
         let downsample1 = blocks::Downsampler::<f32>::new(16384, 384000.0, 200000.0);
         downsample1.connect_to_producer(&freq_shifter);
@@ -63,7 +75,8 @@ impl SimpleSdr {
         playback.connect_to_producer(&volume);
 
         SimpleSdr {
-            sdr,
+            device,
+            sdr_rx,
             freq_shifter,
             downsample1,
             filter1,

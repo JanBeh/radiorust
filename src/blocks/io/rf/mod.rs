@@ -1,11 +1,11 @@
 //! Blocks interfacing RF hardware
 //!
-//! Use feature "`soapy`" for SoapySDR support.
+//! Use feature "`soapysdr`" for SoapySDR support.
 
-#[cfg(feature = "soapy")]
+#[cfg(feature = "soapysdr")]
 mod soapy;
 
-#[cfg(feature = "soapy")]
+#[cfg(feature = "soapysdr")]
 pub use soapy::*;
 
 #[cfg(test)]

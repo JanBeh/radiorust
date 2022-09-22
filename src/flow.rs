@@ -343,7 +343,7 @@ pub trait Producer<T>
 where
     T: Clone,
 {
-    /// Obtain inner [`Sender`]s [`SenderConnector`]
+    /// Obtain inner [`Sender`]'s [`SenderConnector`]
     fn connector(&self) -> SenderConnector<'_, T>;
     /// Connect `Producer` to [`Consumer`]
     fn connect_to_consumer<C: Consumer<T>>(&self, consumer: &C) {

@@ -4,7 +4,7 @@ use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
 use crate::numbers::*;
-use crate::samples::Samples;
+use crate::samples::*;
 
 use tokio::sync::watch;
 use tokio::task::spawn;

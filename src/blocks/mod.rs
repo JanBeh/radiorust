@@ -40,3 +40,4 @@ pub use basic::*;
 pub mod filters;
 pub mod io;
 pub mod modulation;
+pub mod morse;

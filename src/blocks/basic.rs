@@ -3,7 +3,7 @@ use crate::flow::*;
 use crate::flt;
 use crate::math::*;
 use crate::numbers::*;
-use crate::samples::Samples;
+use crate::samples::*;
 
 use num::rational::Ratio;
 use tokio::sync::{mpsc, watch};

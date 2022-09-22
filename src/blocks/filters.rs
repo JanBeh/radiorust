@@ -5,7 +5,7 @@ use crate::flow::*;
 use crate::flt;
 use crate::math::*;
 use crate::numbers::*;
-use crate::samples::Samples;
+use crate::samples::*;
 
 use rustfft::{Fft, FftPlanner};
 use tokio::sync::watch;

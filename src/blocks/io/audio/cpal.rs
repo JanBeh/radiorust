@@ -4,8 +4,8 @@
 
 use crate::bufferpool::*;
 use crate::flow::*;
-use crate::numbers::Complex;
-use crate::samples::Samples;
+use crate::numbers::*;
+use crate::samples::*;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 

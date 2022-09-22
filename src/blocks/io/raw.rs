@@ -2,8 +2,8 @@
 
 use crate::bufferpool::*;
 use crate::flow::*;
-use crate::numbers::Complex;
-use crate::samples::Samples;
+use crate::numbers::*;
+use crate::samples::*;
 
 use tokio::sync::oneshot;
 use tokio::task::{spawn, JoinHandle};

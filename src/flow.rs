@@ -177,6 +177,7 @@ pub struct Receiver<T> {
 pub struct ReceiverStream<T> {
     watch: watch::Receiver<Option<broadcast::Sender<Message<T>>>>,
     inner: Option<broadcast::Receiver<Message<T>>>,
+    continuity: bool,
 }
 
 impl<T> Receiver<T>
@@ -216,7 +217,11 @@ where
     pub fn stream(&self) -> ReceiverStream<T> {
         let mut watch = self.watch.subscribe();
         let inner = watch.borrow_and_update().as_ref().map(|x| x.subscribe());
-        ReceiverStream { watch, inner }
+        ReceiverStream {
+            watch,
+            inner,
+            continuity: false,
+        }
     }
 }
 
@@ -242,19 +247,36 @@ where
                     .borrow_and_update()
                     .as_ref()
                     .map(|x| x.subscribe());
-                if was_connected {
+                if was_connected && self.continuity {
+                    self.continuity = false;
                     return Err(RecvError::Reset);
                 }
             }
-            Err(_) => return Err(RecvError::Closed),
+            Err(_) => {
+                if self.continuity {
+                    self.continuity = false;
+                    return Err(RecvError::Reset);
+                }
+                return Err(RecvError::Closed);
+            }
         }
         loop {
             if let Some(inner) = self.inner.as_mut() {
                 match inner.recv().await {
-                    Ok(Message::Value(value)) => return Ok(value),
-                    Ok(Message::Reset) => return Err(RecvError::Reset),
-                    Ok(Message::Finished) => return Err(RecvError::Finished),
+                    Ok(Message::Value(value)) => {
+                        self.continuity = true;
+                        return Ok(value);
+                    }
+                    Ok(Message::Reset) => {
+                        self.continuity = false;
+                        return Err(RecvError::Reset);
+                    }
+                    Ok(Message::Finished) => {
+                        self.continuity = false;
+                        return Err(RecvError::Finished);
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
+                        self.continuity = false;
                         *inner = inner.resubscribe();
                         return Err(RecvError::Reset);
                     }
@@ -269,11 +291,18 @@ where
                         .borrow_and_update()
                         .as_ref()
                         .map(|x| x.subscribe());
-                    if was_connected {
+                    if was_connected && self.continuity {
+                        self.continuity = false;
                         return Err(RecvError::Reset);
                     }
                 }
-                Err(_) => return Err(RecvError::Closed),
+                Err(_) => {
+                    if self.continuity {
+                        self.continuity = false;
+                        return Err(RecvError::Reset);
+                    }
+                    return Err(RecvError::Closed);
+                }
             }
         }
     }
@@ -298,6 +327,7 @@ where
                         Err(broadcast::error::TryRecvError::Closed) => (),
                     }
                 }
+                self.continuity = false;
                 return Err(RecvError::Reset);
             }
         }

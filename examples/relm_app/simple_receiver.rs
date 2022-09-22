@@ -6,7 +6,7 @@ use soapysdr::Direction::Rx;
 
 pub struct SimpleSdr {
     pub device: soapysdr::Device,
-    pub sdr_rx: blocks::io::rf::SoapySdrRx,
+    pub sdr_rx: blocks::io::rf::soapysdr::SoapySdrRx,
     pub freq_shifter: blocks::FreqShifter<f32>,
     pub downsample1: blocks::Downsampler<f32>,
     pub filter1: blocks::filters::Filter<f32>,
@@ -14,7 +14,7 @@ pub struct SimpleSdr {
     pub filter2: blocks::filters::Filter<f32>,
     pub downsample2: blocks::Downsampler<f32>,
     pub volume: blocks::Function<Complex<f32>>,
-    pub playback: blocks::io::audio::Audio,
+    pub playback: blocks::io::audio::cpal::Audio,
 }
 
 impl SimpleSdr {
@@ -27,7 +27,7 @@ impl SimpleSdr {
         device.set_sample_rate(Rx, 0, sample_rate).unwrap();
         device.set_bandwidth(Rx, 0, bandwidth).unwrap();
         let rx_stream = device.rx_stream::<Complex<f32>>(&[0]).unwrap();
-        let mut sdr_rx = blocks::io::rf::SoapySdrRx::new(rx_stream, sample_rate);
+        let mut sdr_rx = blocks::io::rf::soapysdr::SoapySdrRx::new(rx_stream, sample_rate);
         sdr_rx.activate().unwrap();
 
         let freq_shifter = blocks::FreqShifter::<f32>::with_shift(0.3e6);
@@ -61,17 +61,17 @@ impl SimpleSdr {
         downsample2.connect_to_producer(&filter2);
 
         /*
-        let writer = blocks::io::raw_out::ContinuousF32BeWriter::with_path("output.raw");
+        let writer = blocks::io::raw::ContinuousF32BeWriter::with_path("output.raw");
         writer.connect_to_producer(&downsample2);
         tokio::spawn(async move {
-            writer.wait().await;
+            writer.wait().await.ok();
         });
         */
 
         let volume = blocks::Function::<Complex<f32>>::new();
         volume.connect_to_producer(&downsample2);
 
-        let playback = blocks::io::audio::Audio::for_playback(48000.0, 2 * 4096);
+        let playback = blocks::io::audio::cpal::Audio::for_playback(48000.0, 2 * 4096);
         playback.connect_to_producer(&volume);
 
         SimpleSdr {

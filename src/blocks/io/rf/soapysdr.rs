@@ -1,3 +1,5 @@
+//! Interface to RF hardware through SoapySDR (using the [`soapysdr`] crate)
+
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::numbers::Complex;

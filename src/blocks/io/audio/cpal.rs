@@ -1,3 +1,7 @@
+//! Interface to audio hardware through the [`cpal`] crate
+//!
+//! **Note: The API of this module is highly unstable yet and subject to change.**
+
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::numbers::Complex;

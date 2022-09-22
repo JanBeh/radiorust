@@ -3,10 +3,7 @@
 //! Use feature "`soapysdr`" for SoapySDR support.
 
 #[cfg(feature = "soapysdr")]
-mod soapy;
-
-#[cfg(feature = "soapysdr")]
-pub use soapy::*;
+pub mod soapysdr;
 
 #[cfg(test)]
 mod tests {}

@@ -10,21 +10,21 @@ use crate::samples::Samples;
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 
 /// Audio player
-pub struct Audio {
+pub struct AudioPlayer {
     receiver: Receiver<Samples<Complex<f32>>>,
     stream: cpal::Stream,
 }
 
-impl Consumer<Samples<Complex<f32>>> for Audio {
+impl Consumer<Samples<Complex<f32>>> for AudioPlayer {
     fn receiver(&self) -> &Receiver<Samples<Complex<f32>>> {
         &self.receiver
     }
 }
 
-impl Audio {
-    /// Create `Audio` block for playback only with given `sample_rate` and
-    /// desired `buffer_size`
-    pub fn for_playback(sample_rate: f64, buffer_size: usize) -> Self {
+impl AudioPlayer {
+    /// Create `AudioPlayer` block for playback only with given `sample_rate`
+    /// and desired `buffer_size`
+    pub fn new(sample_rate: f64, buffer_size: usize) -> Self {
         let rt = tokio::runtime::Handle::current();
         let sample_rate_int = sample_rate.round() as u32;
         let mut buffer_size: u32 = buffer_size.try_into().unwrap();

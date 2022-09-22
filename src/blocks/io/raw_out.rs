@@ -1,9 +1,9 @@
 //! Raw I/Q data output
 
 use crate::flow::*;
+use crate::numbers::Complex;
 use crate::samples::Samples;
 
-use num::Complex;
 use tokio::task::{spawn, JoinHandle};
 
 use std::fs::File;

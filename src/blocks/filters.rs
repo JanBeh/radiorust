@@ -3,11 +3,10 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
-use crate::genfloat::Float;
 use crate::math::*;
+use crate::numbers::*;
 use crate::samples::Samples;
 
-use num::Complex;
 use rustfft::{Fft, FftPlanner};
 use tokio::sync::watch;
 use tokio::task::spawn;
@@ -57,9 +56,8 @@ struct FilterParams {
 /// amplification factor (as [`Complex<f64>`]) for the given frequency.
 ///
 /// ```
-/// # use radiorust::*;
-/// # use num::Complex;
 /// # fn doc() {
+/// use radiorust::{blocks, numbers::Complex};
 /// // low-pass filter with cutoff at 16 kHz
 /// let my_filter = blocks::filters::Filter::<f32>::new(|_, freq| {
 ///     if freq.abs() <= 16e3 {
@@ -98,9 +96,8 @@ struct FilterParams {
 /// A filter with DC blocker can, for example, be implemented as follows:
 ///
 /// ```
-/// # use radiorust::*;
-/// # use num::Complex;
 /// # fn doc() {
+/// use radiorust::{blocks, numbers::Complex};
 /// let dc_blocker = blocks::filters::Filter::<f32>::new(|bin, _| {
 ///     // NOTE: window function defaults to `Window::Kaiser(2.0)`,
 ///     // thus `2` is used as boundary below:

@@ -25,8 +25,8 @@
 //! [`Samples`]: crate::samples::Samples
 //! [`chunk`]: crate::samples::Samples::chunk
 //! [`sample_rate`]: crate::samples::Samples::sample_rate
-//! [`Complex<Flt>`]: num::Complex
-//! [`Float`]: crate::genfloat::Float
+//! [`Complex<Flt>`]: crate.numbers::Complex
+//! [`Float`]: crate::numbers::Float
 //! [`spawn`]: tokio::task::spawn
 //! [task]: tokio::task
 //! [`Producer<T>`]: crate::flow::Producer

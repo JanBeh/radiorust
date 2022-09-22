@@ -1,12 +1,13 @@
-//! Generic float support
+//! Generic floats and complex numbers
 //!
-//! See [`flt!`] for an example.
-//!
-//! [`flt!`]: crate::flt
+//! This module re-exports [`num::Complex`] as [`Complex`] and provides a
+//! [`Float`] trait, which is implemented by [`f32`] and [`f64`].
 
 use rustfft::FftNum;
 
 use std::marker::{Send, Sync};
+
+pub use num::Complex;
 
 /// Trait implemented for [`f32`] and [`f64`]
 ///
@@ -14,6 +15,11 @@ use std::marker::{Send, Sync};
 /// precision calculations.
 /// It should not be relied upon that this trait is implemented for other types
 /// than [`f32`] or [`f64`], as this can change with minor/patch version bumps.
+///
+/// See [`flt!`] for an example on how to write functions working with generic
+/// floats (i.e. `f32` or `f64`, depending on the caller's choice).
+///
+/// [`flt!`]: crate::flt
 pub trait Float
 where
     Self: 'static + Send + Sync,
@@ -39,7 +45,7 @@ where
 /// # Example
 ///
 /// ```
-/// use radiorust::{flt, genfloat::Float};
+/// use radiorust::{flt, numbers::Float};
 ///
 /// fn generic_double<Flt: Float>(arg: Flt) -> Flt {
 ///     arg * flt!(2)

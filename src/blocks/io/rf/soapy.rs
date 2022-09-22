@@ -1,8 +1,8 @@
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::numbers::Complex;
 use crate::samples::Samples;
 
-use num::Complex;
 use tokio::{
     runtime,
     task::{spawn_blocking, JoinHandle},

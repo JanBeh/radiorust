@@ -1,9 +1,9 @@
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::numbers::Complex;
 use crate::samples::Samples;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
-use num::Complex;
 
 /// Audio player
 pub struct Audio {

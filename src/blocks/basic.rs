@@ -1,12 +1,11 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
-use crate::genfloat::Float;
 use crate::math::*;
+use crate::numbers::*;
 use crate::samples::Samples;
 
 use num::rational::Ratio;
-use num::Complex;
 use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
 
@@ -75,8 +74,7 @@ where
 ///
 /// ```
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async move {
-/// use radiorust::blocks::Function;
-/// use num::Complex;
+/// use radiorust::{blocks::Function, numbers::Complex};
 /// let attenuate_6db = Function::<Complex<f32>>::with_closure(move |x| x / 2.0);
 /// # });
 /// ```

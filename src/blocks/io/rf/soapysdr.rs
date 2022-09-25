@@ -4,6 +4,7 @@ use crate::bufferpool::*;
 use crate::flow::*;
 use crate::numbers::*;
 use crate::samples::*;
+use crate::sync::keepalive;
 
 use tokio::{
     runtime,
@@ -12,7 +13,7 @@ use tokio::{
 
 use std::fmt;
 use std::mem::take;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 struct SoapySdrRxRetval {
     rx_stream: soapysdr::RxStream<Complex<f32>>,
@@ -20,7 +21,7 @@ struct SoapySdrRxRetval {
 }
 
 struct SoapySdrRxActive {
-    keepalive: Arc<()>,
+    keepalive_send: keepalive::Sender,
     join_handle: JoinHandle<SoapySdrRxRetval>,
 }
 
@@ -88,13 +89,12 @@ impl SoapySdrRx {
                 };
                 let sample_rate = self.sample_rate;
                 let output = self.sender.clone();
-                let keepalive_send = Arc::new(());
-                let keepalive_recv = keepalive_send.clone();
+                let (keepalive_send, keepalive_recv) = keepalive::channel();
                 let join_handle = spawn_blocking(move || {
                     let rt = runtime::Handle::current();
                     let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
                     let mut result = Ok(());
-                    while Arc::strong_count(&keepalive_recv) > 1 {
+                    while keepalive_recv.is_alive() {
                         let mut buffer = buf_pool.get();
                         buffer.resize_with(mtu, Default::default);
                         // TODO: The following method call may hang even when
@@ -115,7 +115,7 @@ impl SoapySdrRx {
                     SoapySdrRxRetval { rx_stream, result }
                 });
                 *state_guard = SoapySdrRxState::Active(SoapySdrRxActive {
-                    keepalive: keepalive_send,
+                    keepalive_send,
                     join_handle,
                 });
                 Ok(())
@@ -132,10 +132,10 @@ impl SoapySdrRx {
                 Ok(())
             }
             SoapySdrRxState::Active(SoapySdrRxActive {
-                keepalive,
+                keepalive_send,
                 join_handle,
             }) => {
-                drop(keepalive);
+                drop(keepalive_send);
                 let rt = runtime::Handle::current();
                 let retval = rt.block_on(join_handle).unwrap();
                 *state_guard = SoapySdrRxState::Idle(retval.rx_stream);
@@ -178,7 +178,7 @@ struct SoapySdrTxRetval {
 }
 
 struct SoapySdrTxActive {
-    keepalive: Arc<()>,
+    keepalive_send: keepalive::Sender,
     join_handle: JoinHandle<SoapySdrTxRetval>,
 }
 
@@ -256,12 +256,11 @@ impl SoapySdrTx {
                 }
                 let sample_rate = self.sample_rate;
                 let mut input = self.receiver.stream();
-                let keepalive_send = Arc::new(());
-                let keepalive_recv = keepalive_send.clone();
+                let (keepalive_send, keepalive_recv) = keepalive::channel();
                 let join_handle = spawn_blocking(move || {
                     let rt = runtime::Handle::current();
                     let mut result = Ok(());
-                    while Arc::strong_count(&keepalive_recv) > 1 {
+                    while keepalive_recv.is_alive() {
                         match rt.block_on(input.recv_lowlat(1)) {
                             Ok(Samples {
                                 sample_rate: rcvd_sample_rate,
@@ -307,7 +306,7 @@ impl SoapySdrTx {
                     SoapySdrTxRetval { tx_stream, result }
                 });
                 *state_guard = SoapySdrTxState::Active(SoapySdrTxActive {
-                    keepalive: keepalive_send,
+                    keepalive_send: keepalive_send,
                     join_handle,
                 });
                 Ok(())
@@ -324,10 +323,10 @@ impl SoapySdrTx {
                 Ok(())
             }
             SoapySdrTxState::Active(SoapySdrTxActive {
-                keepalive,
+                keepalive_send,
                 join_handle,
             }) => {
-                drop(keepalive);
+                drop(keepalive_send);
                 let retval = join_handle.await.unwrap();
                 *state_guard = SoapySdrTxState::Idle(retval.tx_stream);
                 retval.result
@@ -345,10 +344,11 @@ impl SoapySdrTx {
                 Err(SoapySdrTxError::AbortRequested)
             }
             SoapySdrTxState::Active(SoapySdrTxActive {
-                keepalive: _,
+                keepalive_send,
                 join_handle,
             }) => {
                 let retval = join_handle.await.unwrap();
+                drop(keepalive_send);
                 *state_guard = SoapySdrTxState::Idle(retval.tx_stream);
                 retval.result
             }

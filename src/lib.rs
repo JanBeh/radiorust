@@ -4,6 +4,8 @@
 
 #![warn(missing_docs)]
 
+mod sync;
+
 pub mod blocks;
 pub mod bufferpool;
 pub mod flow;

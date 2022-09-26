@@ -65,7 +65,7 @@ where
         let output = sender.clone();
         let (abort_send, mut abort_recv) = oneshot::channel::<()>();
         let join_handle = spawn(async move {
-            let mut clock = interval(Duration::from_secs_f64(sample_rate / chunk_len as f64));
+            let mut clock = interval(Duration::from_secs_f64(chunk_len as f64 / sample_rate));
             clock.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 match abort_recv.try_recv() {
@@ -76,8 +76,8 @@ where
                 match retrieve().await {
                     Ok(Some(chunk)) => {
                         assert_eq!(chunk.len(), chunk_len);
-                        output.send(Samples { sample_rate, chunk }).await;
                         clock.tick().await;
+                        output.send(Samples { sample_rate, chunk }).await;
                     }
                     Ok(None) => {
                         output.finish().await;

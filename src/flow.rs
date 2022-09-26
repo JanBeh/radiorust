@@ -1,5 +1,11 @@
 //! Data flow between [blocks]
 //!
+//! **Note:** This module still suffers some problems when a lot of values
+//! (e.g. [`Chunk`]s or [`Samples`]) are sent at once (e.g. due to reducing the
+//! chunk size) because there is currently no backpressure.
+//!
+//! [`Chunk`]: crate::bufferpool::Chunk
+//!
 //! # Example
 //!
 //! The following toy example passes a `String` from a [`Producer`] to a
@@ -119,7 +125,7 @@ where
     }
     async fn inner_send(&self, message: Message<T>) {
         self.inner.send(message).ok();
-        yield_now().await;
+        yield_now().await; // TODO: this may not be sufficient
     }
     /// Send data to all [`Receiver`] which have been [connected]
     ///

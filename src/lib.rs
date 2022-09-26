@@ -1,5 +1,7 @@
 //! Software defined radio
 //!
+//! **Note:** This crate is in an early alpha stage.
+//!
 //! For getting started, have a look at the [`blocks`] module.
 
 #![warn(missing_docs)]

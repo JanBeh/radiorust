@@ -29,5 +29,9 @@ relm4-macros = { version = "0.4.4" }
 name = "relm_app"
 required-features = ["cpal", "soapysdr"]
 
+[[example]]
+name = "morse"
+required-features = ["soapysdr"]
+
 [package.metadata.docs.rs]
 no-default-features = true

@@ -6,11 +6,10 @@
 
 #![warn(missing_docs)]
 
-mod sync;
-
 pub mod blocks;
 pub mod bufferpool;
 pub mod flow;
 pub mod math;
 pub mod numbers;
 pub mod samples;
+pub mod sync;

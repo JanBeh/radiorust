@@ -67,7 +67,7 @@ impl AudioPlayer {
                     current_chunk_opt.take().unwrap()
                 } else {
                     loop {
-                        match rt.block_on(input.recv_lowlat(0)) {
+                        match rt.block_on(input.recv()) {
                             Ok(Samples {
                                 sample_rate: rcvd_sample_rate,
                                 chunk,

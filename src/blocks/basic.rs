@@ -136,8 +136,7 @@ where
                         loop {
                             match closure_recv.try_recv() {
                                 Ok(f) => closure_opt = Some(f),
-                                Err(mpsc::error::TryRecvError::Empty) => break,
-                                Err(mpsc::error::TryRecvError::Disconnected) => return,
+                                Err(_) => break,
                             }
                         }
                         let closure = closure_opt.as_ref().unwrap();
@@ -248,12 +247,8 @@ where
                         }
                     },
                 };
-                match output_chunk_len_recv.has_changed() {
-                    Ok(false) => (),
-                    Ok(true) => {
-                        output_chunk_len = output_chunk_len_recv.borrow_and_update().clone()
-                    }
-                    Err(_) => return,
+                if output_chunk_len_recv.has_changed().unwrap_or(false) {
+                    output_chunk_len = output_chunk_len_recv.borrow_and_update().clone();
                 }
                 if let Some((sample_rate, mut patchwork_chunk)) = patchwork_opt {
                     if patchwork_chunk.len() > output_chunk_len {
@@ -404,11 +399,8 @@ where
                         sample_rate,
                         chunk: input_chunk,
                     }) => {
-                        let recalculate: bool = match shift_recv.has_changed() {
-                            Ok(false) => Some(sample_rate) != prev_sample_rate,
-                            Ok(true) => true,
-                            Err(_) => return,
-                        };
+                        let recalculate: bool = shift_recv.has_changed().unwrap_or(false)
+                            || Some(sample_rate) != prev_sample_rate;
                         prev_sample_rate = Some(sample_rate);
                         if recalculate {
                             let start_phase: Flt = match phase_vec.is_empty() {

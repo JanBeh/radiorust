@@ -195,14 +195,9 @@ where
                         chunk: input_chunk,
                     }) => {
                         let n = input_chunk.len();
-                        let recalculate: bool = match params_recv.has_changed() {
-                            Ok(false) => {
-                                Some(sample_rate) != prev_sample_rate
-                                    || Some(n) != prev_input_chunk_len
-                            }
-                            Ok(true) => true,
-                            Err(_) => return,
-                        };
+                        let recalculate: bool = params_recv.has_changed().unwrap_or(false)
+                            || Some(sample_rate) != prev_sample_rate
+                            || Some(n) != prev_input_chunk_len;
                         prev_sample_rate = Some(sample_rate);
                         prev_input_chunk_len = Some(n);
                         if recalculate {

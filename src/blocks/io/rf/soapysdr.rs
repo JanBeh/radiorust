@@ -261,7 +261,7 @@ impl SoapySdrTx {
                     let rt = runtime::Handle::current();
                     let mut result = Ok(());
                     while keepalive_recv.is_alive() {
-                        match rt.block_on(input.recv_lowlat(1)) {
+                        match rt.block_on(input.recv()) {
                             Ok(Samples {
                                 sample_rate: rcvd_sample_rate,
                                 chunk,

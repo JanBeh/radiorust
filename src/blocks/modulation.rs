@@ -55,10 +55,8 @@ where
                         sample_rate,
                         chunk: input_chunk,
                     }) => {
-                        match deviation_recv.has_changed() {
-                            Ok(false) => (),
-                            Ok(true) => deviation = deviation_recv.borrow_and_update().clone(),
-                            Err(_) => return,
+                        if deviation_recv.has_changed().unwrap_or(false) {
+                            deviation = deviation_recv.borrow_and_update().clone();
                         }
                         let factor: Flt = flt!(deviation / sample_rate * TAU);
                         let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
@@ -148,10 +146,8 @@ where
                         sample_rate,
                         chunk: input_chunk,
                     }) => {
-                        match deviation_recv.has_changed() {
-                            Ok(false) => (),
-                            Ok(true) => deviation = deviation_recv.borrow_and_update().clone(),
-                            Err(_) => return,
+                        if deviation_recv.has_changed().unwrap_or(false) {
+                            deviation = deviation_recv.borrow_and_update().clone();
                         }
                         let factor: Flt = flt!(sample_rate / deviation / TAU);
                         let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());

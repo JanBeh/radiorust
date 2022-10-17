@@ -1,11 +1,5 @@
 //! Data flow between [blocks]
 //!
-//! **Note:** This module still suffers some problems when a lot of values
-//! (e.g. [`Chunk`]s or [`Samples`]) are sent at once (e.g. due to reducing the
-//! chunk size) because there is currently no backpressure.
-//!
-//! [`Chunk`]: crate::bufferpool::Chunk
-//!
 //! # Example
 //!
 //! The following toy example passes a `String` from a [`Producer`] to a
@@ -50,8 +44,15 @@
 //!
 //! [blocks]: crate::blocks
 
-use tokio::sync::{broadcast, watch};
-use tokio::task::yield_now;
+use crate::sync::broadcast_bp;
+
+use tokio::select;
+use tokio::sync::watch;
+use tokio::task::spawn;
+
+use std::collections::VecDeque;
+use std::future::pending;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 enum Message<T> {
@@ -82,7 +83,7 @@ pub enum RecvError {
 /// To send data to the connected `Receiver`s, use [`Sender::send`]. Call
 /// [`Sender::reset`] to indicate missing data.
 pub struct Sender<T> {
-    inner: broadcast::Sender<Message<T>>,
+    inner: broadcast_bp::Sender<Message<T>>,
 }
 
 impl<T> Clone for Sender<T> {
@@ -98,7 +99,7 @@ impl<T> Clone for Sender<T> {
 /// A `SenderConnector` is obtained by invoking the [`Sender::connector`]
 /// method and can be passed to the [`Receiver::connect`] method.
 pub struct SenderConnector<'a, T> {
-    inner: &'a broadcast::Sender<Message<T>>,
+    inner: &'a broadcast_bp::Sender<Message<T>>,
 }
 
 impl<T> Clone for SenderConnector<'_, T> {
@@ -113,46 +114,39 @@ impl<T> Sender<T>
 where
     T: Clone,
 {
-    /// Create a new `Sender` with a default capacity of 8
+    /// Create a new `Sender`
     pub fn new() -> Self {
-        Self::with_capacity(8)
-    }
-    /// Create a new `Sender` and manually specify its `capacity`
-    pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            inner: broadcast::channel(capacity).0,
+            inner: broadcast_bp::Sender::new(),
         }
     }
-    async fn inner_send(&self, message: Message<T>) {
-        self.inner.send(message).ok();
-        yield_now().await; // TODO: this may not be sufficient
-    }
-    /// Send data to all [`Receiver`] which have been [connected]
+    /// Send data to all [`Receiver`]s which have been [connected]
     ///
     /// [connected]: Receiver::connect
     pub async fn send(&self, value: T) {
-        self.inner_send(Message::Value(value)).await;
+        self.inner.send(Message::Value(value)).await;
     }
     /// Notify all [`Receiver`]s that some data is missing or that the data
     /// stream has been restarted
     pub async fn reset(&self) {
-        self.inner_send(Message::Reset).await;
+        self.inner.send(Message::Reset).await;
     }
     /// Notify all [`Receiver`]s that the data stream has been completed
     pub async fn finish(&self) {
-        self.inner_send(Message::Finished).await;
+        self.inner.send(Message::Finished).await;
     }
     /// Propagate a [`RecvError`] to all [`Receiver`]s
     ///
     /// [`RecvError::Closed`] is mapped to [`RecvError::Reset`] because a
     /// `Receiver` may be reconnected with another [`Sender`] later.
     pub async fn forward_error(&self, error: RecvError) {
-        self.inner_send(match error {
-            RecvError::Reset => Message::Reset,
-            RecvError::Finished => Message::Finished,
-            RecvError::Closed => Message::Reset,
-        })
-        .await;
+        self.inner
+            .send(match error {
+                RecvError::Reset => Message::Reset,
+                RecvError::Finished => Message::Finished,
+                RecvError::Closed => Message::Reset,
+            })
+            .await;
     }
     /// Obtain a [`SenderConnector`], which can be used to [connect] a
     /// [`Receiver`] to this `Sender`
@@ -172,7 +166,7 @@ where
 /// To retrieve data from any connected `Sender`, a [`ReceiverStream`] must be
 /// obtained by calling the [`Receiver::stream`] method.
 pub struct Receiver<T> {
-    watch: watch::Sender<Option<broadcast::Sender<Message<T>>>>,
+    watch: watch::Sender<Option<broadcast_bp::Subscriber<Message<T>>>>,
 }
 
 /// Handle that allows retrieving data from a [`Receiver`]
@@ -181,8 +175,8 @@ pub struct Receiver<T> {
 /// method. Mutable access to the `ReceiverStream` is then required to invoke
 /// one of its receive methods.
 pub struct ReceiverStream<T> {
-    watch: watch::Receiver<Option<broadcast::Sender<Message<T>>>>,
-    inner: Option<broadcast::Receiver<Message<T>>>,
+    watch: watch::Receiver<Option<broadcast_bp::Subscriber<Message<T>>>>,
+    inner: Option<broadcast_bp::Receiver<Message<T>>>,
     continuity: bool,
 }
 
@@ -210,14 +204,13 @@ where
     ///
     /// Any previously connected `Sender` is automatically disconnected.
     pub fn connect(&self, connector: SenderConnector<T>) {
-        self.watch.send_replace(Some(connector.inner.clone()));
+        self.watch.send_replace(Some(connector.inner.subscriber()));
     }
     /// Disconnect this `Receiver` from any [`Sender`] if connected
     pub fn disconnect(&self) {
         self.watch.send_replace(None);
     }
     /// Retrieve [`ReceiverStream`] handle which can be used to [receive] data
-    /// as long as the [`Receiver`] isn't dropped
     ///
     /// [receive]: ReceiverStream::recv
     pub fn stream(&self) -> ReceiverStream<T> {
@@ -238,106 +231,71 @@ where
     /// Receive next `T`
     ///
     /// If a message was lost, [`RecvError::Reset`] is returned.
-    /// If the originating [`Receiver`] has been dropped, [`RecvError::Closed`]
-    /// is returned.
-    ///
-    /// For low-latency retrieval, use [`ReceiverStream::recv_lowlat`]
-    /// instead.
+    /// If there is no connected [`Sender`] anymore and if the originating
+    /// [`Receiver`] has been dropped, [`RecvError::Closed`] is returned.
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        match self.watch.has_changed() {
-            Ok(false) => (),
-            Ok(true) => {
-                let was_connected = self.inner.is_some();
-                self.inner = self
-                    .watch
-                    .borrow_and_update()
-                    .as_ref()
-                    .map(|x| x.subscribe());
-                if was_connected && self.continuity {
-                    self.continuity = false;
-                    return Err(RecvError::Reset);
-                }
+        let change = |this: &mut Self| {
+            let was_connected = this.inner.is_some();
+            this.inner = this
+                .watch
+                .borrow_and_update()
+                .as_ref()
+                .map(|x| x.subscribe());
+            if was_connected && this.continuity {
+                this.continuity = false;
+                Err(RecvError::Reset)
+            } else {
+                Ok(())
             }
-            Err(_) => {
-                if self.continuity {
-                    self.continuity = false;
-                    return Err(RecvError::Reset);
-                }
-                return Err(RecvError::Closed);
-            }
-        }
+        };
+        let mut unchangeable = false;
         loop {
             if let Some(inner) = self.inner.as_mut() {
-                match inner.recv().await {
-                    Ok(Message::Value(value)) => {
-                        self.continuity = true;
-                        return Ok(value);
-                    }
-                    Ok(Message::Reset) => {
-                        self.continuity = false;
-                        return Err(RecvError::Reset);
-                    }
-                    Ok(Message::Finished) => {
-                        self.continuity = false;
-                        return Err(RecvError::Finished);
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        self.continuity = false;
-                        *inner = inner.resubscribe();
-                        return Err(RecvError::Reset);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => (),
-                }
-            }
-            match self.watch.changed().await {
-                Ok(_) => {
-                    let was_connected = self.inner.is_some();
-                    self.inner = self
-                        .watch
-                        .borrow_and_update()
-                        .as_ref()
-                        .map(|x| x.subscribe());
-                    if was_connected && self.continuity {
-                        self.continuity = false;
-                        return Err(RecvError::Reset);
-                    }
-                }
-                Err(_) => {
-                    if self.continuity {
-                        self.continuity = false;
-                        return Err(RecvError::Reset);
-                    }
-                    return Err(RecvError::Closed);
-                }
-            }
-        }
-    }
-    /// Receive next `T` with low latency
-    ///
-    /// Similar to [`ReceiverStream::recv`], but keeps number of buffered chunks
-    /// smaller than `capacity` to avoid latency.
-    pub async fn recv_lowlat(&mut self, capacity: usize) -> Result<T, RecvError> {
-        if let Some(inner) = self.inner.as_mut() {
-            let waste = usize::saturating_sub(inner.len(), capacity);
-            if waste > 0 {
-                for _ in 0..waste {
-                    match inner.try_recv() {
-                        Ok(Message::Value(_)) => (),
-                        Ok(Message::Reset) => (),
-                        Ok(Message::Finished) => (),
-                        Err(broadcast::error::TryRecvError::Empty) => break,
-                        Err(broadcast::error::TryRecvError::Lagged(_)) => {
-                            *inner = inner.resubscribe();
-                            break;
+                select! {
+                    result = async {
+                        if unchangeable {
+                            pending::<()>().await;
                         }
-                        Err(broadcast::error::TryRecvError::Closed) => (),
+                        self.watch.changed().await
+                    } => {
+                        match result {
+                            Ok(()) => change(self)?,
+                            Err(_) => unchangeable = true,
+                        }
+                    }
+                    message_opt = inner.recv() => {
+                        match message_opt {
+                            Some(Message::Value(value)) => {
+                                self.continuity = true;
+                                return Ok(value);
+                            }
+                            Some(Message::Reset) => {
+                                self.continuity = false;
+                                return Err(RecvError::Reset);
+                            }
+                            Some(Message::Finished) => {
+                                self.continuity = false;
+                                return Err(RecvError::Finished);
+                            }
+                            None => self.inner = None,
+                        }
                     }
                 }
-                self.continuity = false;
-                return Err(RecvError::Reset);
+            } else {
+                let result = self.watch.changed().await;
+                match result {
+                    Ok(()) => change(self)?,
+                    Err(_) => {
+                        if self.continuity {
+                            self.continuity = false;
+                            return Err(RecvError::Reset);
+                        } else {
+                            return Err(RecvError::Closed);
+                        }
+                    }
+                }
             }
         }
-        self.recv().await
     }
 }
 
@@ -392,5 +350,198 @@ where
 {
     fn receiver(&self) -> &Receiver<T> {
         self
+    }
+}
+
+/// Data which corresponds to a duration
+pub trait Temporal {
+    /// Duration in seconds
+    fn duration(&self) -> f64;
+}
+
+struct TemporalQueueEntry<T> {
+    instant: Instant,
+    data: T,
+}
+
+/// Queue which tracks the duration and age of stored elements
+struct TemporalQueue<T> {
+    queue: VecDeque<TemporalQueueEntry<T>>,
+    duration: f64,
+}
+
+impl<T> TemporalQueue<T>
+where
+    T: Temporal,
+{
+    /// Create empty queue
+    pub fn new() -> Self {
+        Self {
+            queue: VecDeque::new(),
+            duration: 0.0,
+        }
+    }
+    fn update_duration(&mut self) {
+        self.duration = 0.0;
+        for entry in self.queue.iter() {
+            self.duration += entry.data.duration();
+        }
+    }
+    /// Is queue empty?
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+    /// Append at back of queue
+    pub fn push(&mut self, element: T) {
+        self.queue.push_back(TemporalQueueEntry {
+            instant: Instant::now(),
+            data: element,
+        });
+        self.update_duration();
+    }
+    /// Pop from front of queue
+    pub fn pop(&mut self) -> Option<T> {
+        let popped = self.queue.pop_front().map(|entry| entry.data);
+        self.update_duration();
+        popped
+    }
+    /// Duration in seconds
+    pub fn duration(&self) -> f64 {
+        self.duration
+    }
+    /// Age of oldest entry (`0.0` if empty)
+    pub fn age(&self) -> f64 {
+        self.queue
+            .front()
+            .map(|entry| entry.instant.elapsed().as_secs_f64())
+            .unwrap_or(0.0)
+    }
+}
+
+impl<T> Temporal for Message<T>
+where
+    T: Temporal,
+{
+    fn duration(&self) -> f64 {
+        match self {
+            Message::Value(value) => value.duration(),
+            Message::Reset => 0.0,
+            Message::Finished => 0.0,
+        }
+    }
+}
+
+/// Buffering mechanism for [`Temporal`] data
+///
+/// This struct is a [`Consumer`] and [`Producer`] which forwards data from a
+/// connected [`Producer`] to all connected [`Consumer`]s while performing
+/// buffering.
+pub struct Buffer<T> {
+    receiver: Receiver<T>,
+    sender: Sender<T>,
+}
+
+impl<T> Consumer<T> for Buffer<T>
+where
+    T: Clone,
+{
+    fn receiver(&self) -> &Receiver<T> {
+        &self.receiver
+    }
+}
+
+impl<T> Producer<T> for Buffer<T>
+where
+    T: Clone,
+{
+    fn connector(&self) -> SenderConnector<T> {
+        self.sender.connector()
+    }
+}
+
+impl<T> Buffer<T>
+where
+    T: Clone + Send + Sync + 'static,
+    T: Temporal,
+{
+    /// Create new [`Buffer`]
+    ///
+    /// The buffer will start with buffering `initial_capacity` seconds of
+    /// data before beginning to send out received data.
+    /// When empty, the buffer will buffer data corresponding to a duration of
+    /// at least `min_capacity` seconds before sending out data again.
+    /// It will suspend receiving when holding strictly more than
+    /// `max_capacity` seconds of data.
+    /// If buffered data is older than `max_age` seconds, it will be discarded.
+    pub fn new(initial_capacity: f64, min_capacity: f64, max_capacity: f64, max_age: f64) -> Self {
+        let receiver = Receiver::<T>::new();
+        let sender = Sender::<T>::new();
+        let mut input = receiver.stream();
+        let output = sender.clone();
+        spawn(async move {
+            let mut initial = true;
+            let mut underrun = true;
+            let mut closed = false;
+            let mut queue: TemporalQueue<Message<T>> = TemporalQueue::new();
+            loop {
+                if queue.is_empty() && closed {
+                    break;
+                }
+                enum Action<'a, T> {
+                    Fill(T),
+                    Drain(broadcast_bp::Reservation<'a, T>),
+                    Close,
+                }
+                match select! {
+                    action = async {
+                        if closed || !(queue.duration() <= max_capacity) {
+                            pending::<()>().await;
+                        }
+                        match input.recv().await {
+                            Ok(data) => Action::Fill(Message::Value(data)),
+                            Err(err) => match err {
+                                RecvError::Reset => Action::Fill(Message::Reset),
+                                RecvError::Finished => Action::Fill(Message::Finished),
+                                RecvError::Closed => Action::Close,
+                            }
+                        }
+                    } => action,
+                    action = async {
+                        if underrun {
+                            pending::<()>().await;
+                        }
+                        Action::Drain(output.inner.reserve().await)
+                    } => action,
+                } {
+                    Action::Fill(message) => {
+                        queue.push(message);
+                        if initial {
+                            if queue.duration() >= initial_capacity {
+                                underrun = false;
+                                initial = false;
+                            }
+                        } else {
+                            if queue.duration() >= min_capacity {
+                                underrun = false;
+                            }
+                        }
+                    }
+                    Action::Drain(reservation) => {
+                        while queue.age() > max_age {
+                            if queue.pop().is_none() {
+                                break;
+                            }
+                        }
+                        if let Some(message) = queue.pop() {
+                            reservation.send(message);
+                        } else {
+                            underrun = true;
+                        }
+                    }
+                    Action::Close => closed = true,
+                }
+            }
+        });
+        Self { receiver, sender }
     }
 }

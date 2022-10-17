@@ -13,8 +13,8 @@
 //! transform.
 //!
 //! Blocks will usually [`spawn`] a [task], and thus require an active
-//! [`tokio::runtime::Runtime`]. When the block gets dropped, it may stop
-//! working.
+//! [`tokio::runtime::Runtime`].
+//!
 //! There is no data structure describing the graph of connected blocks.
 //! Instead, any [`Producer<T>`] can be connected with any [`Consumer<T>`], see
 //! [`Producer::connect_to_consumer`] or [`Consumer::connect_to_producer`].

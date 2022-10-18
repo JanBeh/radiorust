@@ -25,8 +25,8 @@ impl<T> Consumer<T> for Nop<T>
 where
     T: Clone,
 {
-    fn receiver(&self) -> &Receiver<T> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<T> {
+        self.receiver.connector()
     }
 }
 
@@ -34,7 +34,7 @@ impl<T> Producer<T> for Nop<T>
 where
     T: Clone,
 {
-    fn connector(&self) -> SenderConnector<T> {
+    fn sender_connector(&self) -> SenderConnector<T> {
         self.sender.connector()
     }
 }
@@ -88,8 +88,8 @@ impl<T> Consumer<Samples<T>> for Function<T>
 where
     T: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<T>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
+        self.receiver.connector()
     }
 }
 
@@ -97,7 +97,7 @@ impl<T> Producer<Samples<T>> for Function<T>
 where
     T: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<T>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<T>> {
         self.sender.connector()
     }
 }
@@ -193,8 +193,8 @@ impl<T> Consumer<Samples<T>> for Rechunker<T>
 where
     T: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<T>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
+        self.receiver.connector()
     }
 }
 
@@ -202,7 +202,7 @@ impl<T> Producer<Samples<T>> for Rechunker<T>
 where
     T: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<T>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<T>> {
         self.sender.connector()
     }
 }
@@ -342,8 +342,8 @@ impl<Flt> Consumer<Samples<Complex<Flt>>> for FreqShifter<Flt>
 where
     Flt: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<Complex<Flt>>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
+        self.receiver.connector()
     }
 }
 
@@ -351,7 +351,7 @@ impl<Flt> Producer<Samples<Complex<Flt>>> for FreqShifter<Flt>
 where
     Flt: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
         self.sender.connector()
     }
 }
@@ -486,8 +486,8 @@ impl<Flt> Consumer<Samples<Complex<Flt>>> for Downsampler<Flt>
 where
     Flt: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<Complex<Flt>>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
+        self.receiver.connector()
     }
 }
 
@@ -495,7 +495,7 @@ impl<Flt> Producer<Samples<Complex<Flt>>> for Downsampler<Flt>
 where
     Flt: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
         self.sender.connector()
     }
 }
@@ -634,8 +634,8 @@ impl<Flt> Consumer<Samples<Complex<Flt>>> for Upsampler<Flt>
 where
     Flt: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<Complex<Flt>>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
+        self.receiver.connector()
     }
 }
 
@@ -643,7 +643,7 @@ impl<Flt> Producer<Samples<Complex<Flt>>> for Upsampler<Flt>
 where
     Flt: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
         self.sender.connector()
     }
 }

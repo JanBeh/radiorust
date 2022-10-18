@@ -127,8 +127,8 @@ impl<Flt> Consumer<Samples<Complex<Flt>>> for Filter<Flt>
 where
     Flt: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<Complex<Flt>>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
+        self.receiver.connector()
     }
 }
 
@@ -136,7 +136,7 @@ impl<Flt> Producer<Samples<Complex<Flt>>> for Filter<Flt>
 where
     Flt: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
         self.sender.connector()
     }
 }

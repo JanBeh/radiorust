@@ -46,7 +46,7 @@ pub struct SoapySdrRx {
 }
 
 impl Producer<Samples<Complex<f32>>> for SoapySdrRx {
-    fn connector(&self) -> SenderConnector<Samples<Complex<f32>>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<f32>>> {
         self.sender.connector()
     }
 }
@@ -206,8 +206,8 @@ pub struct SoapySdrTx {
 }
 
 impl Consumer<Samples<Complex<f32>>> for SoapySdrTx {
-    fn receiver(&self) -> &Receiver<Samples<Complex<f32>>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<f32>>> {
+        self.receiver.connector()
     }
 }
 

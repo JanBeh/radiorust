@@ -16,8 +16,8 @@ pub struct AudioPlayer {
 }
 
 impl Consumer<Samples<Complex<f32>>> for AudioPlayer {
-    fn receiver(&self) -> &Receiver<Samples<Complex<f32>>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<f32>>> {
+        self.receiver.connector()
     }
 }
 

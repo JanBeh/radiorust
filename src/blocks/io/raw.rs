@@ -29,7 +29,7 @@ impl<T, E> Producer<Samples<T>> for ClosureSource<T, E>
 where
     T: Clone,
 {
-    fn connector(&self) -> SenderConnector<'_, Samples<T>> {
+    fn sender_connector(&self) -> SenderConnector<'_, Samples<T>> {
         self.sender.connector()
     }
 }
@@ -114,8 +114,8 @@ pub struct F32BeReader {
 }
 
 impl Producer<Samples<Complex<f32>>> for F32BeReader {
-    fn connector(&self) -> SenderConnector<'_, Samples<Complex<f32>>> {
-        self.inner.connector()
+    fn sender_connector(&self) -> SenderConnector<'_, Samples<Complex<f32>>> {
+        self.inner.sender_connector()
     }
 }
 
@@ -200,8 +200,8 @@ impl<T, E> Consumer<Samples<T>> for ContinuousClosureSink<T, E>
 where
     T: Clone,
 {
-    fn receiver(&self) -> &Receiver<Samples<T>> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
+        self.receiver.connector()
     }
 }
 
@@ -300,8 +300,8 @@ pub struct ContinuousF32BeWriter {
 }
 
 impl Consumer<Samples<Complex<f32>>> for ContinuousF32BeWriter {
-    fn receiver(&self) -> &Receiver<Samples<Complex<f32>>> {
-        &self.inner.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<f32>>> {
+        self.inner.receiver.connector()
     }
 }
 

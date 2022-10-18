@@ -17,7 +17,7 @@
 //!     /* extra fields can go here */
 //! }
 //! impl Producer<String> for MySource {
-//!     fn connector(&self) -> SenderConnector<'_, String> {
+//!     fn sender_connector(&self) -> SenderConnector<'_, String> {
 //!         self.sender.connector()
 //!     }
 //! }
@@ -27,8 +27,8 @@
 //!     /* extra fields can go here */
 //! }
 //! impl Consumer<String> for MySink {
-//!     fn receiver(&self) -> &Receiver<String> {
-//!         &self.receiver
+//!     fn receiver_connector(&self) -> ReceiverConnector<'_, String> {
+//!         self.receiver.connector()
 //!     }
 //! }
 //!
@@ -78,7 +78,7 @@ pub enum RecvError {
 ///
 /// To connect a [`Sender`] to a [`Receiver`], a [`SenderConnector`] handle
 /// must be obtained by calling [`Sender::connector`]. The `SenderConnector`
-/// handle can then be passed to [`Receiver::connect`].
+/// handle can then be passed to [`ReceiverConnector::connect`].
 ///
 /// To send data to the connected `Receiver`s, use [`Sender::send`]. Call
 /// [`Sender::reset`] to indicate missing data.
@@ -97,14 +97,16 @@ impl<T> Clone for Sender<T> {
 /// Temporary handle to connect a [`Sender`] to a [`Receiver`]
 ///
 /// A `SenderConnector` is obtained by invoking the [`Sender::connector`]
-/// method and can be passed to the [`Receiver::connect`] method.
+/// method and can be passed to the [`ReceiverConnector::connect`] method.
 pub struct SenderConnector<'a, T> {
-    inner: &'a broadcast_bp::Sender<Message<T>>,
+    sender: &'a Sender<T>,
 }
 
 impl<T> Clone for SenderConnector<'_, T> {
     fn clone(&self) -> Self {
-        SenderConnector { inner: self.inner }
+        SenderConnector {
+            sender: self.sender,
+        }
     }
 }
 
@@ -122,7 +124,7 @@ where
     }
     /// Send data to all [`Receiver`]s which have been [connected]
     ///
-    /// [connected]: Receiver::connect
+    /// [connected]: ReceiverConnector::connect
     pub async fn send(&self, value: T) {
         self.inner.send(Message::Value(value)).await;
     }
@@ -151,23 +153,41 @@ where
     /// Obtain a [`SenderConnector`], which can be used to [connect] a
     /// [`Receiver`] to this `Sender`
     ///
-    /// [connect]: Receiver::connect
+    /// [connect]: ReceiverConnector::connect
     pub fn connector(&self) -> SenderConnector<'_, T> {
-        SenderConnector { inner: &self.inner }
+        SenderConnector { sender: self }
     }
 }
 
 /// Receiver that can be dynamically connected to a [`Sender`]
 ///
-/// To connect a [`Receiver`] to a [`Sender`], a [`SenderConnector`] handle
-/// must be obtained by calling [`Sender::connector`]. The `SenderConnector`
-/// handle can then be passed to [`Receiver::connect`].
+/// To connect a [`Receiver`] to a [`Sender`], obtain a [`ReceiverConnector`]
+/// and [`SenderConnector`] handle and use the [`ReceiverConnector::connect`]
+/// method.
 ///
 /// To retrieve data from any connected `Sender`, a [`ReceiverStream`] must be
 /// obtained by calling the [`Receiver::stream`] method.
 pub struct Receiver<T> {
     watch: watch::Sender<Option<broadcast_bp::Subscriber<Message<T>>>>,
 }
+
+/// Temporary handle to connect a [`Receiver`] to a [`Sender`]
+///
+/// A `ReceiverConnector` is obtained by invoking the [`Receiver::connector`]
+/// method.
+pub struct ReceiverConnector<'a, T> {
+    receiver: &'a Receiver<T>,
+}
+
+impl<T> Clone for ReceiverConnector<'_, T> {
+    fn clone(&self) -> Self {
+        ReceiverConnector {
+            receiver: self.receiver,
+        }
+    }
+}
+
+impl<T> Copy for ReceiverConnector<'_, T> {}
 
 /// Handle that allows retrieving data from a [`Receiver`]
 ///
@@ -186,7 +206,7 @@ where
 {
     /// Create a new `Receiver` which isn't [connected] with any [`Sender`] yet
     ///
-    /// [connected]: Receiver::connect
+    /// [connected]: ReceiverConnector::connect
     pub fn new() -> Self {
         Self {
             watch: watch::channel(None).0,
@@ -194,21 +214,18 @@ where
     }
     /// Create a `Receiver` and [connect] it to a [`Sender`]
     ///
-    /// [connect]: Receiver::connect
+    /// [connect]: ReceiverConnector::connect
     pub fn with_sender(sender: &Sender<T>) -> Self {
         let this = Self::new();
-        this.connect(sender.connector());
+        this.connector().connect(sender.connector());
         this
     }
-    /// Connect this `Receiver` to a [`Sender`]
+    /// Obtain a [`ReceiverConnector`], which can be used to [connect] a
+    /// [`Sender`] to this `Receiver`
     ///
-    /// Any previously connected `Sender` is automatically disconnected.
-    pub fn connect(&self, connector: SenderConnector<T>) {
-        self.watch.send_replace(Some(connector.inner.subscriber()));
-    }
-    /// Disconnect this `Receiver` from any [`Sender`] if connected
-    pub fn disconnect(&self) {
-        self.watch.send_replace(None);
+    /// [connect]: ReceiverConnector::connect
+    pub fn connector(&self) -> ReceiverConnector<'_, T> {
+        ReceiverConnector { receiver: self }
     }
     /// Retrieve [`ReceiverStream`] handle which can be used to [receive] data
     ///
@@ -221,6 +238,24 @@ where
             inner,
             continuity: false,
         }
+    }
+}
+
+impl<T> ReceiverConnector<'_, T>
+where
+    T: Clone,
+{
+    /// Connect this `Receiver` to a [`Sender`]
+    ///
+    /// Any previously connected `Sender` is automatically disconnected.
+    pub fn connect(&self, connector: SenderConnector<T>) {
+        self.receiver
+            .watch
+            .send_replace(Some(connector.sender.inner.subscriber()));
+    }
+    /// Disconnect this `Receiver` from any [`Sender`] if connected
+    pub fn disconnect(&self) {
+        self.receiver.watch.send_replace(None);
     }
 }
 
@@ -308,10 +343,12 @@ where
     T: Clone,
 {
     /// Obtain inner [`Sender`]'s [`SenderConnector`]
-    fn connector(&self) -> SenderConnector<'_, T>;
+    fn sender_connector(&self) -> SenderConnector<'_, T>;
     /// Connect `Producer` to [`Consumer`]
     fn connect_to_consumer<C: Consumer<T>>(&self, consumer: &C) {
-        consumer.receiver().connect(self.connector());
+        consumer
+            .receiver_connector()
+            .connect(self.sender_connector());
     }
 }
 
@@ -319,8 +356,8 @@ impl<T> Producer<T> for Sender<T>
 where
     T: Clone,
 {
-    fn connector(&self) -> SenderConnector<'_, T> {
-        Sender::connector(&self)
+    fn sender_connector(&self) -> SenderConnector<'_, T> {
+        Sender::connector(self)
     }
 }
 
@@ -332,15 +369,16 @@ pub trait Consumer<T>
 where
     T: Clone,
 {
-    /// Obtain reference to inner [`Receiver`]
-    fn receiver(&self) -> &Receiver<T>;
+    /// Obtain inner [`Receiver`]'s [`ReceiverConnector`]
+    fn receiver_connector(&self) -> ReceiverConnector<'_, T>;
     /// Connect `Consumer` to [`Producer`]
     fn connect_to_producer<P: Producer<T>>(&self, producer: &P) {
-        self.receiver().connect(producer.connector());
+        self.receiver_connector()
+            .connect(producer.sender_connector());
     }
     /// Disconnect `Consumer` from any connected [`Producer`] if connected
     fn disconnect(&self) {
-        self.receiver().disconnect();
+        self.receiver_connector().disconnect();
     }
 }
 
@@ -348,8 +386,8 @@ impl<T> Consumer<T> for Receiver<T>
 where
     T: Clone,
 {
-    fn receiver(&self) -> &Receiver<T> {
-        self
+    fn receiver_connector(&self) -> ReceiverConnector<'_, T> {
+        Receiver::connector(self)
     }
 }
 
@@ -445,8 +483,8 @@ impl<T> Consumer<T> for Buffer<T>
 where
     T: Clone,
 {
-    fn receiver(&self) -> &Receiver<T> {
-        &self.receiver
+    fn receiver_connector(&self) -> ReceiverConnector<T> {
+        self.receiver.connector()
     }
 }
 
@@ -454,7 +492,7 @@ impl<T> Producer<T> for Buffer<T>
 where
     T: Clone,
 {
-    fn connector(&self) -> SenderConnector<T> {
+    fn sender_connector(&self) -> SenderConnector<T> {
         self.sender.connector()
     }
 }

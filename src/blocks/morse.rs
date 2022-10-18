@@ -232,7 +232,7 @@ impl<Flt> Producer<Samples<Complex<Flt>>> for Keyer<Flt>
 where
     Flt: Clone,
 {
-    fn connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
         self.sender.connector()
     }
 }

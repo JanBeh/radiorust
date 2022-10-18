@@ -520,6 +520,7 @@ where
             let mut initial = true;
             let mut underrun = true;
             let mut closed = false;
+            let mut reset_sent = false;
             let mut queue: TemporalQueue<Message<T>> = TemporalQueue::new();
             loop {
                 if queue.is_empty() && closed {
@@ -565,15 +566,25 @@ where
                         }
                     }
                     Action::Drain(reservation) => {
-                        while queue.age() > max_age {
-                            if queue.pop().is_none() {
-                                break;
+                        let mut reservation = Some(reservation);
+                        if queue.age() > max_age {
+                            while queue.age() > max_age {
+                                if queue.pop().is_none() {
+                                    break;
+                                }
+                            }
+                            if !reset_sent {
+                                reservation.take().unwrap().send(Message::Reset);
+                                reset_sent = true;
                             }
                         }
-                        if let Some(message) = queue.pop() {
-                            reservation.send(message);
-                        } else {
-                            underrun = true;
+                        if let Some(reservation) = reservation {
+                            if let Some(message) = queue.pop() {
+                                reservation.send(message);
+                                reset_sent = false;
+                            } else {
+                                underrun = true;
+                            }
                         }
                     }
                     Action::Close => closed = true,

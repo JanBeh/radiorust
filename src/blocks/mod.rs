@@ -34,6 +34,8 @@
 //! [`Producer::connect_to_consumer`]: crate::flow::Producer::connect_to_consumer
 //! [`Consumer::connect_to_producer`]: crate::flow::Consumer::connect_to_producer
 
+pub use crate::flow::Buffer;
+
 mod basic;
 pub use basic::*;
 

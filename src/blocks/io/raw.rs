@@ -7,29 +7,27 @@ use crate::samples::*;
 
 use tokio::sync::oneshot;
 use tokio::task::{spawn, JoinHandle};
-use tokio::time::{interval, MissedTickBehavior};
 
 use std::fs::File;
 use std::future::{ready, Future};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use std::time::Duration;
 
-/// Block invoking a callback to produce [`Chunk<T>`]s at a specified rate
+/// Block acting as [`Producer`], which uses a callback as source
 ///
 /// The type argument `E` indicates a possible reported error type by the
 /// callback.
 pub struct ClosureSource<T, E> {
-    sender: Sender<Samples<T>>,
+    sender: Sender<T>,
     abort: oneshot::Sender<()>,
     join_handle: JoinHandle<Result<(), E>>,
 }
 
-impl<T, E> Producer<Samples<T>> for ClosureSource<T, E>
+impl<T, E> Producer<T> for ClosureSource<T, E>
 where
     T: Clone,
 {
-    fn sender_connector(&self) -> SenderConnector<'_, Samples<T>> {
+    fn sender_connector(&self) -> SenderConnector<T> {
         self.sender.connector()
     }
 }
@@ -39,34 +37,25 @@ where
     T: Clone + Send + Sync + 'static,
     E: Send + 'static,
 {
-    /// Create block which invokes the `retrieve` closure to produce
-    /// [`Chunk<T>`]s
-    ///
-    /// The closure will be called at a speed such that the given `sample_rate`
-    /// is reached. The returned [`Chunk`]s must match the specified
-    /// `chunk_len`, or the background task panics.
-    pub fn new<F>(chunk_len: usize, sample_rate: f64, mut retrieve: F) -> Self
+    /// Create block which invokes the `retrieve` closure to produce values to
+    /// send
+    pub fn new<F>(mut retrieve: F) -> Self
     where
-        F: FnMut() -> Result<Option<Chunk<T>>, E> + Send + 'static,
+        F: FnMut() -> Result<Option<T>, E> + Send + 'static,
     {
-        Self::new_async(chunk_len, sample_rate, move || ready(retrieve()))
+        Self::new_async(move || ready(retrieve()))
     }
     /// Create block which invokes the `retrieve` closure and `await`s its
-    /// result to produce [`Chunk<T>`]s
-    ///
-    /// This function is the same as [`ClosureSource::new`] but accepts an
-    /// asynchronously working closure.
-    pub fn new_async<F, R>(chunk_len: usize, sample_rate: f64, mut retrieve: F) -> Self
+    /// result to produce values to send
+    pub fn new_async<F, R>(mut retrieve: F) -> Self
     where
         F: FnMut() -> R + Send + 'static,
-        R: Future<Output = Result<Option<Chunk<T>>, E>> + Send,
+        R: Future<Output = Result<Option<T>, E>> + Send,
     {
-        let sender = Sender::<Samples<T>>::new();
+        let sender = Sender::<T>::new();
         let output = sender.clone();
         let (abort_send, mut abort_recv) = oneshot::channel::<()>();
         let join_handle = spawn(async move {
-            let mut clock = interval(Duration::from_secs_f64(chunk_len as f64 / sample_rate));
-            clock.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 match abort_recv.try_recv() {
                     Ok(()) => unreachable!(),
@@ -74,11 +63,7 @@ where
                     Err(oneshot::error::TryRecvError::Closed) => return Ok(()),
                 }
                 match retrieve().await {
-                    Ok(Some(chunk)) => {
-                        assert_eq!(chunk.len(), chunk_len);
-                        clock.tick().await;
-                        output.send(Samples { sample_rate, chunk }).await;
-                    }
+                    Ok(Some(data)) => output.send(data).await,
                     Ok(None) => {
                         output.finish().await;
                         return Ok(());
@@ -107,10 +92,10 @@ where
     }
 }
 
-/// Block which reads single precision float samples in big endianess from a
-/// [reader][Read] at a specified speed
+/// Block acting as [`Producer`], which reads [`f32`]s in big endianess from a
+/// [reader][Read]
 pub struct F32BeReader {
-    inner: ClosureSource<Complex<f32>, io::Error>,
+    inner: ClosureSource<Samples<Complex<f32>>, io::Error>,
 }
 
 impl Producer<Samples<Complex<f32>>> for F32BeReader {
@@ -120,15 +105,14 @@ impl Producer<Samples<Complex<f32>>> for F32BeReader {
 }
 
 impl F32BeReader {
-    /// Create `F32BeReader`, which reads samples from the given `writer` at
-    /// the specified `sample_rate`
+    /// Create `F32BeReader`, which reads samples from the given `writer`
     pub fn new<R>(chunk_len: usize, sample_rate: f64, mut reader: R) -> Self
     where
         R: Read + Send + 'static,
     {
         let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
         let mut bytes: Vec<u8> = vec![0u8; chunk_len.checked_mul(8).unwrap()];
-        let inner = ClosureSource::new(chunk_len, sample_rate, move || {
+        let inner = ClosureSource::<Samples<Complex<f32>>, io::Error>::new(move || {
             let mut chunk_buf = buf_pool.get_with_capacity(chunk_len);
             match reader.read_exact(&mut bytes) {
                 Ok(()) => {
@@ -137,7 +121,10 @@ impl F32BeReader {
                         let im = f32::from_be_bytes(sample_bytes[4..8].try_into().unwrap());
                         chunk_buf.push(Complex::new(re, im));
                     }
-                    Ok(Some(chunk_buf.finalize()))
+                    Ok(Some(Samples {
+                        sample_rate,
+                        chunk: chunk_buf.finalize(),
+                    }))
                 }
                 Err(err) => {
                     if err.kind() == io::ErrorKind::UnexpectedEof {
@@ -173,8 +160,8 @@ impl F32BeReader {
 /// [`ContinuousClosureSink::stop`]
 #[derive(Debug)]
 pub enum ContinuousClosureSinkError<E> {
-    /// A buffer underrun occurred
-    Underrun,
+    /// The stream has been reset (see [`RecvError::Reset`])
+    Reset,
     /// An error was reported by the processing closure
     Report(E),
 }
@@ -184,23 +171,21 @@ enum ContinuousClosureSinkStatus<E> {
     Report(E),
 }
 
-/// Block invoking a callback for every received [`Chunk<T>`] and failing on
-/// buffer underrun
+/// Block acting as [`Consumer`], which uses a callback as sink and aborts when
+/// stream is reset
 ///
 /// The type argument `E` indicates a possible reported error type by the
 /// callback.
-///
-/// [`Chunk<T>`]: crate::bufferpool::Chunk
 pub struct ContinuousClosureSink<T, E> {
-    receiver: Receiver<Samples<T>>,
+    receiver: Receiver<T>,
     join_handle: JoinHandle<ContinuousClosureSinkStatus<E>>,
 }
 
-impl<T, E> Consumer<Samples<T>> for ContinuousClosureSink<T, E>
+impl<T, E> Consumer<T> for ContinuousClosureSink<T, E>
 where
     T: Clone,
 {
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
+    fn receiver_connector(&self) -> ReceiverConnector<T> {
         self.receiver.connector()
     }
 }
@@ -210,37 +195,29 @@ where
     T: Clone + Send + Sync + 'static,
     E: Send + 'static,
 {
-    /// Create block which invokes the `process` closure for each received
-    /// [`Chunk<T>`]
-    ///
-    /// [`Chunk<T>`]: crate::bufferpool::Chunk
+    /// Create block which invokes the `process` closure for received data
     pub fn new<F>(mut process: F) -> Self
     where
-        F: FnMut(&[T]) -> Result<(), E> + Send + 'static,
+        F: FnMut(T) -> Result<(), E> + Send + 'static,
     {
         Self::new_async(move |arg| ready(process(arg)))
     }
-    /// Create block which invokes the `process` closure for each received
-    /// [`Chunk<T>`] and `await`s its result
+    /// Create block which invokes the `process` closure for received data and
+    /// `await`s its result
     ///
     /// This function is the same as [`ContinuousClosureSink::new`] but accepts
     /// an asynchronously working closure.
-    ///
-    /// [`Chunk<T>`]: crate::bufferpool::Chunk
     pub fn new_async<F, R>(mut process: F) -> Self
     where
-        F: FnMut(&[T]) -> R + Send + 'static,
+        F: FnMut(T) -> R + Send + 'static,
         R: Future<Output = Result<(), E>> + Send,
     {
-        let receiver = Receiver::<Samples<T>>::new();
+        let receiver = Receiver::<T>::new();
         let mut input = receiver.stream();
         let join_handle = spawn(async move {
             loop {
                 match input.recv().await {
-                    Ok(Samples {
-                        sample_rate: _,
-                        chunk,
-                    }) => match process(&chunk).await {
+                    Ok(data) => match process(data).await {
                         Ok(()) => (),
                         Err(err) => return ContinuousClosureSinkStatus::Report(err),
                     },
@@ -258,7 +235,7 @@ where
         match self.join_handle.await {
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
             Ok(ContinuousClosureSinkStatus::RecvError(_)) => {
-                Err(ContinuousClosureSinkError::Underrun)
+                Err(ContinuousClosureSinkError::Reset)
             }
             Ok(ContinuousClosureSinkStatus::Report(err)) => {
                 Err(ContinuousClosureSinkError::Report(err))
@@ -273,7 +250,7 @@ where
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Closed)) => Ok(()),
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
             Ok(ContinuousClosureSinkStatus::RecvError(_)) => {
-                Err(ContinuousClosureSinkError::Underrun)
+                Err(ContinuousClosureSinkError::Reset)
             }
             Ok(ContinuousClosureSinkStatus::Report(err)) => {
                 Err(ContinuousClosureSinkError::Report(err))
@@ -287,16 +264,16 @@ where
 /// [`ContinuousF32BeWriter::stop`]
 #[derive(Debug)]
 pub enum ContinuousWriterError {
-    /// A buffer underrun occurred
-    Underrun,
+    /// The stream has been reset (see [`RecvError::Reset`])
+    Reset,
     /// An error was reported by the processing closure
     Io(io::Error),
 }
 
-/// Block which writes single precision float samples in big endianess to a
-/// [writer][Write], failing on buffer underrun
+/// Block acting as [`Consumer`], which writes [`f32`]s in big endianess to a
+/// [writer][Write] and aborts when stream is reset
 pub struct ContinuousF32BeWriter {
-    inner: ContinuousClosureSink<Complex<f32>, io::Error>,
+    inner: ContinuousClosureSink<Samples<Complex<f32>>, io::Error>,
 }
 
 impl Consumer<Samples<Complex<f32>>> for ContinuousF32BeWriter {
@@ -312,8 +289,8 @@ impl ContinuousF32BeWriter {
     where
         W: Write + Send + 'static,
     {
-        let inner = ContinuousClosureSink::new(move |chunk: &[Complex<f32>]| {
-            for sample in chunk.iter() {
+        let inner = ContinuousClosureSink::new(move |samples: Samples<Complex<f32>>| {
+            for sample in samples.chunk.iter() {
                 writer.write_all(&sample.re.to_be_bytes())?;
                 writer.write_all(&sample.im.to_be_bytes())?;
             }
@@ -329,7 +306,7 @@ impl ContinuousF32BeWriter {
     }
     fn map_err(err: ContinuousClosureSinkError<io::Error>) -> ContinuousWriterError {
         match err {
-            ContinuousClosureSinkError::Underrun => ContinuousWriterError::Underrun,
+            ContinuousClosureSinkError::Reset => ContinuousWriterError::Reset,
             ContinuousClosureSinkError::Report(rpt) => ContinuousWriterError::Io(rpt),
         }
     }

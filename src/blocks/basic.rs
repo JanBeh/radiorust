@@ -6,8 +6,12 @@ use crate::numbers::*;
 use crate::samples::*;
 
 use num::rational::Ratio;
+use rustfft::{Fft, FftPlanner};
 use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
+
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// Block which performs no operation on the received data and simply sends it
 /// out unchanged
@@ -219,10 +223,10 @@ where
         let (output_chunk_len_send, mut output_chunk_len_recv) = watch::channel(output_chunk_len);
         let mut input = receiver.stream();
         let output = sender.clone();
-        let mut buf_pool = ChunkBufPool::<T>::new();
-        let mut samples_opt: Option<Samples<T>> = None;
-        let mut patchwork_opt: Option<(f64, ChunkBuf<T>)> = None;
         spawn(async move {
+            let mut buf_pool = ChunkBufPool::<T>::new();
+            let mut samples_opt: Option<Samples<T>> = None;
+            let mut patchwork_opt: Option<(f64, ChunkBuf<T>)> = None;
             loop {
                 let mut samples = match samples_opt {
                     Some(x) => x,
@@ -313,7 +317,7 @@ where
                 }
             }
         });
-        Rechunker {
+        Self {
             receiver,
             sender,
             output_chunk_len: output_chunk_len_send,
@@ -327,6 +331,83 @@ where
     pub fn set_output_chunk_len(&self, output_chunk_len: usize) {
         assert!(output_chunk_len > 0, "chunk length must be positive");
         self.output_chunk_len.send_replace(output_chunk_len);
+    }
+}
+
+/// Block that concatenates successive chunks to produce overlapping chunks
+pub struct Overlapper<T> {
+    receiver: Receiver<Samples<T>>,
+    sender: Sender<Samples<T>>,
+}
+
+impl<T> Consumer<Samples<T>> for Overlapper<T>
+where
+    T: Clone,
+{
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
+        self.receiver.connector()
+    }
+}
+
+impl<T> Producer<Samples<T>> for Overlapper<T>
+where
+    T: Clone,
+{
+    fn sender_connector(&self) -> SenderConnector<Samples<T>> {
+        self.sender.connector()
+    }
+}
+
+impl<T> Overlapper<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    /// Create new block with given number of chunks to be concatenated for
+    /// overlapping
+    pub fn new(chunk_count: usize) -> Self {
+        assert!(chunk_count > 0, "chunk count must be positive");
+        let receiver = Receiver::<Samples<T>>::new();
+        let sender = Sender::<Samples<T>>::new();
+        let mut input = receiver.stream();
+        let output = sender.clone();
+        spawn(async move {
+            let mut buf_pool = ChunkBufPool::<T>::new();
+            let mut history: VecDeque<Samples<T>> = VecDeque::new();
+            loop {
+                match input.recv().await {
+                    Ok(samples) => {
+                        history.push_back(samples);
+                        if history.len() >= chunk_count {
+                            let mut sample_count: usize = 0;
+                            let mut sample_rate: f64 = 0.0;
+                            for samples in history.iter() {
+                                sample_count += samples.chunk.len();
+                                sample_rate += samples.sample_rate * samples.chunk.len() as f64;
+                            }
+                            sample_rate /= sample_count as f64;
+                            let mut output_chunk = buf_pool.get_with_capacity(sample_count);
+                            for samples in history.iter() {
+                                output_chunk.extend_from_slice(&samples.chunk);
+                            }
+                            output
+                                .send(Samples {
+                                    sample_rate,
+                                    chunk: output_chunk.finalize(),
+                                })
+                                .await;
+                        }
+                    }
+                    Err(err) => {
+                        history = VecDeque::new();
+                        output.forward_error(err).await;
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self { receiver, sender }
     }
 }
 
@@ -772,6 +853,77 @@ where
     }
 }
 
+/// Block performing a Fourier analysis
+pub struct Fourier<Flt> {
+    receiver: Receiver<Samples<Complex<Flt>>>,
+    sender: Sender<Samples<Complex<Flt>>>,
+}
+
+impl<Flt> Consumer<Samples<Complex<Flt>>> for Fourier<Flt>
+where
+    Flt: Clone,
+{
+    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
+        self.receiver.connector()
+    }
+}
+
+impl<Flt> Producer<Samples<Complex<Flt>>> for Fourier<Flt>
+where
+    Flt: Clone,
+{
+    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
+        self.sender.connector()
+    }
+}
+
+impl<Flt> Fourier<Flt>
+where
+    Flt: Float,
+{
+    /// Create `Fourier` block without windowing
+    pub fn new() -> Self {
+        let receiver = Receiver::<Samples<Complex<Flt>>>::new();
+        let sender = Sender::<Samples<Complex<Flt>>>::new();
+        let mut input: ReceiverStream<Samples<Complex<Flt>>> = receiver.stream();
+        let output: Sender<Samples<Complex<Flt>>> = sender.clone();
+        spawn(async move {
+            let mut buf_pool = ChunkBufPool::new();
+            let mut previous_chunk_len: Option<usize> = None;
+            let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
+            loop {
+                match input.recv().await {
+                    Ok(Samples {
+                        sample_rate,
+                        chunk: input_chunk,
+                    }) => {
+                        let n: usize = input_chunk.len();
+                        if Some(n) != previous_chunk_len {
+                            fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n));
+                            previous_chunk_len = Some(n);
+                        }
+                        let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
+                        output_chunk.extend_from_slice(&input_chunk);
+                        fft.as_ref().unwrap().process(&mut output_chunk);
+                        output
+                            .send(Samples {
+                                sample_rate,
+                                chunk: output_chunk.finalize(),
+                            })
+                            .await;
+                    }
+                    Err(err) => {
+                        output.forward_error(err).await;
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self { receiver, sender }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

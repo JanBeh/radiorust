@@ -268,6 +268,7 @@ where
                         previous_chunk = Some(input_chunk);
                     }
                     Err(err) => {
+                        previous_chunk = None;
                         output.forward_error(err).await;
                         if err == RecvError::Closed {
                             return;

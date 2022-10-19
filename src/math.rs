@@ -20,25 +20,33 @@ pub fn bessel_I0<Flt: Float>(x: Flt) -> Flt {
     sum
 }
 
-/// Return value of Kaiser window with given `beta` multiplied with unknown
-/// constant
+/// Return value (multiplied with unknown constant) of Kaiser window with given
+/// `beta`
+///
+/// The argument `x` ranges from `-1.0` to `1.0`.
 pub fn relative_kaiser_beta<Flt: Float>(beta: Flt, x: Flt) -> Flt {
     bessel_I0(beta * Flt::sqrt(flt!(1) - x * x))
 }
 
-/// Returns a closure that calculates the Kaiser window for a given `beta`
+/// Returns a closure that calculates the Kaiser window with a given `beta`
+///
+/// The argument passed to the closure ranges from `-1.0` to `1.0`.
 pub fn kaiser_fn_with_beta<Flt: Float>(beta: Flt) -> impl Fn(Flt) -> Flt {
     let scale = bessel_I0(beta).recip();
     move |x| relative_kaiser_beta(beta, x) * scale
 }
 
-/// Returns a closure that calculates the Kaiser window for a given `alpha`
+/// Returns a closure that calculates the Kaiser window with a given `alpha`
+///
+/// The argument passed to the closure ranges from `-1.0` to `1.0`.
 pub fn kaiser_fn_with_alpha<Flt: Float>(alpha: Flt) -> impl Fn(Flt) -> Flt {
     kaiser_fn_with_beta(alpha * Flt::PI())
 }
 
 /// Returns a closure that calculates the Kaiser window with first null at `n`
 /// bins beside main lobe
+///
+/// The argument passed to the closure ranges from `-1.0` to `1.0`.
 pub fn kaiser_fn_with_null_at_bin<Flt: Float>(n: Flt) -> impl Fn(Flt) -> Flt {
     kaiser_fn_with_alpha(Flt::sqrt(n * n - flt!(1)))
 }

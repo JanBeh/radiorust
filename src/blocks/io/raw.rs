@@ -234,9 +234,7 @@ where
     pub async fn wait(self) -> Result<(), ContinuousClosureSinkError<E>> {
         match self.join_handle.await {
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
-            Ok(ContinuousClosureSinkStatus::RecvError(_)) => {
-                Err(ContinuousClosureSinkError::Reset)
-            }
+            Ok(ContinuousClosureSinkStatus::RecvError(_)) => Err(ContinuousClosureSinkError::Reset),
             Ok(ContinuousClosureSinkStatus::Report(err)) => {
                 Err(ContinuousClosureSinkError::Report(err))
             }
@@ -249,9 +247,7 @@ where
         match self.join_handle.await {
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Closed)) => Ok(()),
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
-            Ok(ContinuousClosureSinkStatus::RecvError(_)) => {
-                Err(ContinuousClosureSinkError::Reset)
-            }
+            Ok(ContinuousClosureSinkStatus::RecvError(_)) => Err(ContinuousClosureSinkError::Reset),
             Ok(ContinuousClosureSinkStatus::Report(err)) => {
                 Err(ContinuousClosureSinkError::Report(err))
             }

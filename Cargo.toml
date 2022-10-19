@@ -25,6 +25,7 @@ parking_lot = "0.12.1"
 #relm4 = { version = "0.4.4", features = ["tokio-rt"] }
 relm4 = { version = "0.4.4" }
 relm4-macros = { version = "0.4.4" }
+clap = { version = "4.0.17", features = ["derive"] }
 
 [[example]]
 name = "relm_app"
@@ -32,6 +33,10 @@ required-features = ["cpal", "soapysdr"]
 
 [[example]]
 name = "morse"
+required-features = ["soapysdr"]
+
+[[example]]
+name = "bandwidth_meter"
 required-features = ["soapysdr"]
 
 [package.metadata.docs.rs]

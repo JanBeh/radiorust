@@ -39,15 +39,6 @@ pub fn kaiser_null_at_bin_to_beta<Flt: Float>(n: Flt) -> Flt {
     Flt::sqrt(n * n - flt!(1))
 }
 
-/// Return value (multiplied with unknown constant) of Kaiser window with given
-/// `beta`
-///
-/// The argument `x` ranges from `-1.0` to `1.0`.
-#[deprecated]
-pub fn relative_kaiser_beta<Flt: Float>(beta: Flt, x: Flt) -> Flt {
-    bessel_I0(beta * Flt::sqrt(flt!(1) - x * x))
-}
-
 /// Normalized sinc function *sin(πx) / (πx)*
 pub fn sinc<Flt: Float>(x: Flt) -> Flt {
     if x.is_zero() {

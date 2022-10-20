@@ -301,7 +301,9 @@ mod tests {
     use super::*;
     const PRECISION: f64 = 1e-10;
     fn assert_approx(a: f64, b: f64) {
-        assert!((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION);
+        if !((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION) {
+            panic!("{a} and {b} are not approximately equal");
+        }
     }
     #[test]
     fn test_morse_speed_type() {

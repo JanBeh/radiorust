@@ -1,6 +1,6 @@
 //! Signal processing blocks that can be [connected] with each other
 //!
-//! This module's submodules contain signal processing blocks, which will
+//! This module and its submodules contain signal processing blocks, which will
 //! [produce] or [consume] data of type `Samples<Complex<Flt>>`, where
 //! [`Samples`] are [`chunk`]s of data with a specified [`sample_rate`].
 //! [`Complex<Flt>`] is a complex number where real and imaginary part are of

@@ -8,10 +8,8 @@ use crate::numbers::*;
 use crate::samples::*;
 
 use tokio::task::spawn;
-use tokio::time::{interval, MissedTickBehavior};
 
 use std::iter;
-use std::time::Duration;
 
 /// Morse speed
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -261,8 +259,6 @@ where
         let mut remaining_samples: usize = 0;
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         spawn(async move {
-            let mut clock = interval(Duration::from_secs_f64(chunk_len as f64 / sample_rate));
-            clock.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 let mut output_chunk = buf_pool.get_with_capacity(chunk_len);
                 while output_chunk.len() < chunk_len {
@@ -282,7 +278,6 @@ where
                 if output_chunk.is_empty() {
                     break;
                 }
-                clock.tick().await;
                 output
                     .send(Samples {
                         sample_rate,

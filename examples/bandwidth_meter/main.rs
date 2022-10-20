@@ -11,17 +11,30 @@ use clap::Parser;
 use std::collections::VecDeque;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    version,
+    about = "Bandwidth measurement tool",
+    long_about = None,
+)]
 struct Args {
-    #[arg(short, long)]
+    /// Center frequency in MHz
+    #[arg(short = 'f', long)]
     frequency: f64,
+    /// Hardware frequency offset in kHz
+    #[arg(short = 'o', long, default_value = "200")]
+    freq_offset: f64,
+    /// Maximum bandwidth in kHz
+    #[arg(short = 'm', long, default_value = "60")]
+    max_bandwidth: f64,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    assert!(args.max_bandwidth > 0.0 && args.max_bandwidth <= 80.0);
     let frequency = args.frequency * 1e6;
-    let freq_offset = 200e3;
+    let freq_offset = args.freq_offset * 1e3;
+    let max_bandwidth = args.max_bandwidth * 1e3;
     let hw_frequency = frequency + freq_offset;
     let sample_rate = 1024000.0;
     let bandwidth = 1024000.0;
@@ -36,10 +49,10 @@ async fn main() {
     let freq_shifter = blocks::FreqShifter::<f32>::with_shift(freq_offset);
     println!("Frequency: {}", hw_frequency - freq_offset);
     freq_shifter.connect_to_producer(&sdr_rx);
-    let downsampler = blocks::Downsampler::<f32>::new(2048, 102400.0, 60e3);
+    let downsampler = blocks::Downsampler::<f32>::new(2048, 102400.0, max_bandwidth);
     downsampler.connect_to_producer(&freq_shifter);
-    let filter = blocks::filters::Filter::new(|_, freq| {
-        if freq.abs() <= 30e3 {
+    let filter = blocks::filters::Filter::new(move |_, freq| {
+        if freq.abs() <= max_bandwidth / 2.0 {
             Complex::from(1.0)
         } else {
             Complex::from(0.0)

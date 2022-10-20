@@ -4,6 +4,7 @@ use crate::flt;
 use crate::math::*;
 use crate::numbers::*;
 use crate::samples::*;
+use crate::windowing::{self, Window};
 
 use num::rational::Ratio;
 use rustfft::{Fft, FftPlanner};
@@ -644,14 +645,15 @@ where
                             let ir_len: usize = (input_rate / margin * quality).ceil() as usize;
                             assert!(ir_len > 0);
                             let ir_len_flt = ir_len as f64;
-                            let window =
-                                kaiser_fn_with_null_at_bin(ir_len_flt * margin / input_rate);
+                            let window = windowing::Kaiser::with_null_at_bin(
+                                ir_len_flt * margin / input_rate,
+                            );
                             let mut ir_buf: Vec<f64> = Vec::with_capacity(ir_len);
                             let mut energy = 0.0;
                             for i in 0..ir_len {
                                 let x = (i as f64 + 0.5) - ir_len_flt / 2.0;
                                 let y = sinc(x * output_rate / input_rate)
-                                    * window(x * 2.0 / ir_len_flt);
+                                    * window.relative_value_at(x * 2.0 / ir_len_flt);
                                 ir_buf.push(y);
                                 energy += y * y;
                             }
@@ -793,14 +795,15 @@ where
                             let ir_len: usize = (output_rate / margin * quality).ceil() as usize;
                             assert!(ir_len > 0);
                             let ir_len_flt = ir_len as f64;
-                            let window =
-                                kaiser_fn_with_null_at_bin(ir_len_flt * margin / output_rate);
+                            let window = windowing::Kaiser::with_null_at_bin(
+                                ir_len_flt * margin / output_rate,
+                            );
                             let mut ir_buf: Vec<f64> = Vec::with_capacity(ir_len);
                             let mut energy = 0.0;
                             for i in 0..ir_len {
                                 let x = (i as f64 + 0.5) - ir_len_flt / 2.0;
                                 let y = sinc(x * input_rate / output_rate)
-                                    * window(x * 2.0 / ir_len_flt);
+                                    * window.relative_value_at(x * 2.0 / ir_len_flt);
                                 ir_buf.push(y);
                                 energy += y * y;
                             }

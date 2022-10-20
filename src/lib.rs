@@ -14,3 +14,4 @@ pub mod metering;
 pub mod numbers;
 pub mod samples;
 pub mod sync;
+pub mod windowing;

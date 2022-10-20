@@ -3,9 +3,9 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
-use crate::math::*;
 use crate::numbers::*;
 use crate::samples::*;
+use crate::windowing::{Kaiser, Rectangular, Window};
 
 use rustfft::{Fft, FftPlanner};
 use tokio::sync::watch;
@@ -26,25 +26,14 @@ pub fn deemphasis_factor(tau: f64, frequency: f64) -> Complex<f64> {
     .finv()
 }
 
-/// Window selection/parameterization
-#[non_exhaustive]
-pub enum Window {
-    /// Kaiser window
-    Kaiser(
-        /// First null in Fourier transform of window function
-        /// (i.e. half main lobe width) measured in DFT bins
-        f64,
-    ),
-}
-
 // TODO: use trait alias in public interface
 // (but this currently requires extra type annotations on usage)
-trait FreqRespFunc: Fn(isize, f64) -> Complex<f64> + Send + Sync + 'static {}
-impl<T: ?Sized> FreqRespFunc for T where T: Fn(isize, f64) -> Complex<f64> + Send + Sync + 'static {}
+trait FreqRespFunc: Fn(isize, f64) -> Complex<f64> {}
+impl<T: ?Sized> FreqRespFunc for T where T: Fn(isize, f64) -> Complex<f64> {}
 
 struct FilterParams {
-    freq_resp: Box<dyn FreqRespFunc>,
-    window: Window,
+    freq_resp: Box<dyn FreqRespFunc + Send + Sync>,
+    window: Box<dyn Window + Send + Sync>,
 }
 
 /// General purpose frequency filter using fast convolution
@@ -75,8 +64,8 @@ struct FilterParams {
 ///
 /// Frequency resolution depends on the [`sample_rate`] and [`chunk`]
 /// length of received [`Samples`] as well as the selected [`Window`] function.
-/// Using [`Window::Kaiser(x)`] results in a frequency resolution in hertz of
-/// `x * sample_rate / chunk.len()`, but higher `x` improve stop band
+/// Using [`Kaiser::with_null_at_bin(x)`] results in a frequency resolution in
+/// hertz of `x * sample_rate / chunk.len()`, but higher `x` improve stop band
 /// attenuation (`x` must be `>= 1.0` and defaults to `2.0`).
 /// To increase frequency resolution without worsening stop band attenuation,
 /// increase the chunk length of the received `Samples`. Note, however, that
@@ -99,7 +88,7 @@ struct FilterParams {
 /// # fn doc() {
 /// use radiorust::{blocks, numbers::Complex};
 /// let dc_blocker = blocks::filters::Filter::<f32>::new(|bin, _| {
-///     // NOTE: window function defaults to `Window::Kaiser(2.0)`,
+///     // NOTE: window function defaults to `Kaiser::with_null_at_bin(2.0)`,
 ///     // thus `2` is used as boundary below:
 ///     if bin.abs() < 2 {
 ///         Complex::from(0.0)
@@ -113,7 +102,7 @@ struct FilterParams {
 ///
 /// [`sample_rate`]: Samples::sample_rate
 /// [`chunk`]: Samples::chunk
-/// [`Window::Kaiser(x)`]: Window::Kaiser
+/// [`Kaiser::with_null_at_bin(x)`]: Kaiser::with_null_at_bin
 /// [`Rechunker`]: crate::blocks::Rechunker
 /// [`Downsampler`]: crate::blocks::Downsampler
 /// [`Upsampler`]: crate::blocks::Upsampler
@@ -147,14 +136,14 @@ where
 {
     /// Create new `Filter` block with given frequency response with Kaiser window
     ///
-    /// The used [`Window`] function is [`Window::Kaiser(2.0)`].
+    /// The used [`Window`] function is [`Kaiser::with_null_at_bin(2.0)`].
     ///
-    /// [`Window::Kaiser(2.0)`]: Window::Kaiser
+    /// [`Kaiser::with_null_at_bin(2.0)`]: Kaiser::with_null_at_bin
     pub fn new<F>(freq_resp: F) -> Self
     where
         F: Fn(isize, f64) -> Complex<f64> + Send + Sync + 'static,
     {
-        Self::new_internal(Box::new(freq_resp), Window::Kaiser(2.0))
+        Self::new_internal(Box::new(freq_resp), Box::new(Kaiser::with_null_at_bin(2.0)))
     }
     /// Create new `Filter` block with given frequency response with rectangular window
     ///
@@ -164,17 +153,21 @@ where
     where
         F: Fn(isize, f64) -> Complex<f64> + Send + Sync + 'static,
     {
-        Self::new_internal(Box::new(freq_resp), Window::Kaiser(1.0))
+        Self::new_internal(Box::new(freq_resp), Box::new(Rectangular))
     }
     /// Create new `Filter` block with given frequency response and window
     /// function
-    pub fn with_window<F>(freq_resp: F, window: Window) -> Self
+    pub fn with_window<F, W>(freq_resp: F, window: W) -> Self
     where
         F: Fn(isize, f64) -> Complex<f64> + Send + Sync + 'static,
+        W: Window + Send + Sync + 'static,
     {
-        Self::new_internal(Box::new(freq_resp), window)
+        Self::new_internal(Box::new(freq_resp), Box::new(window))
     }
-    fn new_internal(freq_resp: Box<dyn FreqRespFunc>, window: Window) -> Self {
+    fn new_internal(
+        freq_resp: Box<dyn FreqRespFunc + Send + Sync>,
+        window: Box<dyn Window + Send + Sync>,
+    ) -> Self {
         let receiver = Receiver::<Samples<Complex<Flt>>>::new();
         let sender = Sender::<Samples<Complex<Flt>>>::new();
         let (params_send, mut params_recv) = watch::channel(FilterParams { freq_resp, window });
@@ -216,23 +209,24 @@ where
                                     response[n - i] = freq_resp_func(-(i as isize), -freq) / scale;
                                 }
                             }
-                            let Window::Kaiser(blur) = params.window;
-                            drop(params);
                             FftPlanner::<f64>::new()
                                 .plan_fft_inverse(n)
                                 .process(&mut response);
                             for i in 0..(n / 2) {
                                 response.swap(i, i + n / 2);
                             }
-                            let window = kaiser_fn_with_null_at_bin(blur);
                             let mut energy_pre = Complex::<f64>::from(0.0);
                             let mut energy_post = Complex::<f64>::from(0.0);
                             for i in 0..n {
                                 energy_pre += response[i] * response[i];
-                                response[i] *=
-                                    Complex::from(window(2.0 * (i as f64 + 0.5) / n_flt - 1.0));
+                                response[i] *= Complex::from(
+                                    params
+                                        .window
+                                        .relative_value_at(2.0 * (i as f64 + 0.5) / n_flt - 1.0),
+                                );
                                 energy_post += response[i] * response[i];
                             }
+                            drop(params);
                             let scale = (energy_pre / energy_post).sqrt();
                             for y in response.iter_mut() {
                                 *y *= scale;
@@ -293,13 +287,14 @@ where
         });
     }
     /// Update frequency response and window function
-    pub fn update_with_window<F>(&self, freq_resp: F, window: Window)
+    pub fn update_with_window<F, W>(&self, freq_resp: F, window: W)
     where
         F: Fn(isize, f64) -> Complex<f64> + Send + Sync + 'static,
+        W: Window + Send + Sync + 'static,
     {
         self.params.send_replace(FilterParams {
             freq_resp: Box::new(freq_resp),
-            window,
+            window: Box::new(window),
         });
     }
 }

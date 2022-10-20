@@ -887,6 +887,13 @@ where
 {
     /// Create `Fourier` block without windowing
     pub fn new() -> Self {
+        Self::with_window(windowing::Rectangular)
+    }
+    /// Create `Fourier` block with windowing
+    pub fn with_window<W>(window: W) -> Self
+    where
+        W: Window + Send + 'static,
+    {
         let receiver = Receiver::<Samples<Complex<Flt>>>::new();
         let sender = Sender::<Samples<Complex<Flt>>>::new();
         let mut input: ReceiverStream<Samples<Complex<Flt>>> = receiver.stream();
@@ -895,6 +902,8 @@ where
             let mut buf_pool = ChunkBufPool::new();
             let mut previous_chunk_len: Option<usize> = None;
             let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
+            let mut scratch: Vec<f64> = Default::default();
+            let mut window_values: Vec<Flt> = Default::default();
             loop {
                 match input.recv().await {
                     Ok(Samples {
@@ -904,10 +913,28 @@ where
                         let n: usize = input_chunk.len();
                         if Some(n) != previous_chunk_len {
                             fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n));
+                            scratch.clear();
+                            scratch.reserve_exact(n);
+                            let mut energy: f64 = 0.0;
+                            for idx in 0..n {
+                                let value = window
+                                    .relative_value_at(2.0 * (idx as f64 + 0.5) / n as f64 - 1.0);
+                                scratch.push(value);
+                                energy += value * value;
+                            }
+                            let scale: f64 = (n as f64 / energy).sqrt();
+                            window_values.clear();
+                            window_values.reserve_exact(n);
+                            for &value in scratch.iter() {
+                                window_values.push(flt!(value * scale));
+                            }
                             previous_chunk_len = Some(n);
                         }
                         let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
                         output_chunk.extend_from_slice(&input_chunk);
+                        for idx in 0..n {
+                            output_chunk[idx] *= window_values[idx];
+                        }
                         fft.as_ref().unwrap().process(&mut output_chunk);
                         output
                             .send(Samples {

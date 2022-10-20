@@ -95,6 +95,21 @@ mod tests {
         }
     }
     #[test]
+    fn test_level_complex_osc() {
+        const SQRT_HALF: f64 = 1.0 / std::f64::consts::SQRT_2;
+        let vec: Vec<Complex<f64>> = vec![
+            Complex::new(1.0, 0.0),
+            Complex::new(SQRT_HALF, SQRT_HALF),
+            Complex::new(0.0, 1.0),
+            Complex::new(-SQRT_HALF, SQRT_HALF),
+            Complex::new(-1.0, 0.0),
+            Complex::new(-SQRT_HALF, -SQRT_HALF),
+            Complex::new(0.0, -1.0),
+            Complex::new(SQRT_HALF, -SQRT_HALF),
+        ];
+        assert_approx(level(&vec).log10() * 10.0, 0.0);
+    }
+    #[test]
     fn test_bandwidth_silence() {
         let mut buf_pool = ChunkBufPool::<Complex<f64>>::new();
         let mut chunk_buf = buf_pool.get();

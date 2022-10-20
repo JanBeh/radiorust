@@ -373,7 +373,7 @@ where
         let output = sender.clone();
         spawn(async move {
             let mut buf_pool = ChunkBufPool::<T>::new();
-            let mut history: VecDeque<Samples<T>> = VecDeque::new();
+            let mut history: VecDeque<Samples<T>> = VecDeque::with_capacity(chunk_count);
             loop {
                 match input.recv().await {
                     Ok(samples) => {
@@ -396,6 +396,7 @@ where
                                     chunk: output_chunk.finalize(),
                                 })
                                 .await;
+                            history.pop_front();
                         }
                     }
                     Err(err) => {

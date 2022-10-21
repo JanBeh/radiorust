@@ -103,6 +103,9 @@ impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         let mut synced = self.shared.synced.lock();
         synced.sndr_count -= 1;
+        if synced.sndr_count == 0 {
+            self.shared.notify_rcvr.notify_waiters();
+        }
     }
 }
 
@@ -112,6 +115,9 @@ impl<T> Drop for Receiver<T> {
         synced.rcvr_count -= 1;
         if self.slot != synced.slot {
             synced.unseen -= 1;
+            if synced.unseen == 0 {
+                self.shared.notify_sndr.notify_waiters();
+            }
         }
     }
 }

@@ -5,7 +5,8 @@ use crate::flow::*;
 use crate::numbers::*;
 use crate::samples::*;
 
-use tokio::sync::oneshot;
+use tokio::select;
+use tokio::sync::watch;
 use tokio::task::{spawn, JoinHandle};
 
 use std::fs::File;
@@ -17,9 +18,13 @@ use std::path::Path;
 ///
 /// The type argument `E` indicates a possible reported error type by the
 /// callback.
+///
+/// The block will stop sending when dropped, unless it is [detached].
+///
+/// [detached]: ClosureSource::detach
 pub struct ClosureSource<T, E> {
     sender: Sender<T>,
-    abort: oneshot::Sender<()>,
+    abort: watch::Sender<()>,
     join_handle: JoinHandle<Result<(), E>>,
 }
 
@@ -54,23 +59,23 @@ where
     {
         let sender = Sender::<T>::new();
         let output = sender.clone();
-        let (abort_send, mut abort_recv) = oneshot::channel::<()>();
+        let (abort_send, mut abort_recv) = watch::channel::<()>(());
         let join_handle = spawn(async move {
             loop {
-                match abort_recv.try_recv() {
-                    Ok(()) => unreachable!(),
-                    Err(oneshot::error::TryRecvError::Empty) => (),
-                    Err(oneshot::error::TryRecvError::Closed) => return Ok(()),
-                }
-                match retrieve().await {
-                    Ok(Some(data)) => output.send(data).await,
-                    Ok(None) => {
-                        output.finish().await;
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        output.reset().await;
-                        return Err(err);
+                select! {
+                    _ = abort_recv.changed() => return Ok(()),
+                    result = retrieve() => {
+                        match result {
+                            Ok(Some(data)) => output.send(data).await,
+                            Ok(None) => {
+                                output.finish().await;
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                output.reset().await;
+                                return Err(err);
+                            }
+                        }
                     }
                 }
             }
@@ -80,6 +85,16 @@ where
             abort: abort_send,
             join_handle,
         }
+    }
+    /// Detach operation (consume block but continue working)
+    ///
+    /// Note that this method may leak resources if the used closure never
+    /// indicates the end of stream or an error condition, or if there is no
+    /// receiver anymore.
+    pub fn detach(self) {
+        spawn(async move {
+            self.wait().await.ok();
+        });
     }
     /// Wait for stream to finish
     pub async fn wait(self) -> Result<(), E> {
@@ -145,6 +160,13 @@ impl F32BeReader {
             sample_rate,
             BufReader::new(File::create(path).expect("could not open file for source")),
         )
+    }
+    /// Detach operation (consume block but continue working)
+    ///
+    /// Note that this method may leak resources if there is no receiver
+    /// anymore.
+    pub fn detach(self) {
+        self.inner.detach();
     }
     /// Wait for stream to finish
     pub async fn wait(self) -> Result<(), io::Error> {
@@ -317,4 +339,32 @@ impl ContinuousF32BeWriter {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn test_closure_source_stop() {
+        let mut values = vec![1, 2, 3].into_iter();
+        let source = ClosureSource::<i32, ()>::new_async(move || {
+            let value = values.next();
+            async move {
+                match value {
+                    Some(value) => Ok(Some(value)),
+                    None => std::future::pending().await,
+                }
+            }
+        });
+        let receiver = Receiver::<i32>::new();
+        receiver.connect_to_producer(&source);
+        let mut output = receiver.stream();
+        drop(receiver);
+        assert_eq!(output.recv().await, Ok(1));
+        assert_eq!(output.recv().await, Ok(2));
+        assert_eq!(output.recv().await, Ok(3));
+        // optional:
+        // assert_eq!(source.stop().await, Ok(()));
+        drop(source);
+        assert_eq!(output.recv().await, Err(RecvError::Reset));
+        assert_eq!(output.recv().await, Err(RecvError::Closed));
+        assert_eq!(output.recv().await, Err(RecvError::Closed));
+    }
+}

@@ -1,13 +1,68 @@
 //! Asynchronous broadcast channel with backpressure
 //!
-//! A channel can be created by calling [`Sender::new`] and then creating one
-//! or more [`Receiver`]s with [`Sender::subscribe`]. The channel has a fixed
-//! capacity of `1`.
+//! A channel can be created by calling the [`channel`] function, which returns
+//! a [`Sender`] and an [`Enlister`]. To create a [`Receiver`], use
+//! [`Enlister::subscribe`].
+//!
+//! The channel has a fixed capacity of `1`.
 
 use parking_lot::{Mutex, MutexGuard};
 use tokio::sync::Notify;
 
+use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
+
+/// Error returned by [`Sender::send`] if there are no subscribers or receivers
+pub struct SendError<T>(
+    /// The value that could not be sent
+    pub T,
+);
+
+impl<T> fmt::Display for SendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "sending to broadcast channel failed (no subscribers or receivers)"
+        )
+    }
+}
+
+impl<T> fmt::Debug for SendError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SendError")
+    }
+}
+
+impl<T> Error for SendError<T> {}
+
+/// Error returned by [`Sender::reserve`] if there are no subscribers or
+/// receivers
+#[derive(Debug)]
+pub struct RsrvError;
+
+impl fmt::Display for RsrvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "preparing sending to broadcast channel failed (no subscribers or receivers)"
+        )
+    }
+}
+
+impl Error for RsrvError {}
+
+/// Error returned by [`Receiver::recv`] if there are no senders
+#[derive(Debug)]
+pub struct RecvError;
+
+impl fmt::Display for RecvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "receiving from broadcast channel failed (no senders)")
+    }
+}
+
+impl Error for RecvError {}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 enum Slot {
@@ -31,6 +86,7 @@ struct Synced<T> {
     data: Option<T>,
     slot: Slot,
     sndr_count: usize,
+    subs_count: usize,
     rcvr_count: usize,
     unseen: usize,
 }
@@ -47,11 +103,11 @@ pub struct Sender<T> {
 }
 
 /// Handle allowing subscription to [`Sender`]
-pub struct Subscriber<T> {
+pub struct Enlister<T> {
     shared: Arc<Shared<T>>,
 }
 
-/// Guarantee to send one value to [`Sender`] immediately
+/// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
 pub struct Reservation<'a, T> {
     shared: &'a Shared<T>,
     synced: MutexGuard<'a, Synced<T>>,
@@ -65,28 +121,34 @@ pub struct Receiver<T> {
 
 impl<T> Shared<T> {
     fn subscribe(self: &Arc<Self>) -> Receiver<T> {
-        let shared = self.clone();
-        let mut synced = shared.synced.lock();
+        let mut synced = self.synced.lock();
         synced.rcvr_count = synced.rcvr_count.checked_add(1).unwrap();
         let slot = synced.slot;
-        shared.notify_sndr.notify_waiters();
+        self.notify_sndr.notify_waiters();
         drop(synced);
-        Receiver { shared, slot }
+        Receiver {
+            shared: self.clone(),
+            slot,
+        }
     }
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        let shared = self.shared.clone();
-        let mut synced = shared.synced.lock();
+        let mut synced = self.shared.synced.lock();
         synced.sndr_count = synced.sndr_count.checked_add(1).unwrap();
         drop(synced);
-        Self { shared }
+        Self {
+            shared: self.shared.clone(),
+        }
     }
 }
 
-impl<T> Clone for Subscriber<T> {
+impl<T> Clone for Enlister<T> {
     fn clone(&self) -> Self {
+        let mut synced = self.shared.synced.lock();
+        synced.subs_count = synced.subs_count.checked_add(1).unwrap();
+        drop(synced);
         Self {
             shared: self.shared.clone(),
         }
@@ -109,83 +171,91 @@ impl<T> Drop for Sender<T> {
     }
 }
 
-impl<T> Drop for Receiver<T> {
+impl<T> Drop for Enlister<T> {
     fn drop(&mut self) {
         let mut synced = self.shared.synced.lock();
-        synced.rcvr_count -= 1;
-        if self.slot != synced.slot {
-            synced.unseen -= 1;
-            if synced.unseen == 0 {
-                self.shared.notify_sndr.notify_waiters();
-            }
+        synced.subs_count -= 1;
+        if synced.subs_count == 0 && synced.rcvr_count == 0 {
+            self.shared.notify_sndr.notify_waiters();
         }
     }
 }
 
-impl<T> Sender<T>
-where
-    T: Clone,
-{
-    /// Create a new `Sender`
-    pub fn new() -> Self {
-        Sender {
-            shared: Arc::new(Shared {
-                synced: Mutex::new(Synced {
-                    data: None,
-                    slot: Slot::new(),
-                    sndr_count: 1,
-                    rcvr_count: 0,
-                    unseen: 0,
-                }),
-                notify_sndr: Notify::new(),
-                notify_rcvr: Notify::new(),
-            }),
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+        let mut synced = self.shared.synced.lock();
+        synced.rcvr_count -= 1;
+        let mut notify = synced.rcvr_count == 0 && synced.subs_count == 0;
+        if self.slot != synced.slot {
+            synced.unseen -= 1;
+            if synced.unseen == 0 {
+                notify = true;
+            }
+        }
+        if notify {
+            self.shared.notify_sndr.notify_waiters();
         }
     }
+}
+
+/// Create a new broadcast channel by returning a [`Sender`] and [`Enlister`]
+pub fn channel<T>() -> (Sender<T>, Enlister<T>) {
+    let shared1 = Arc::new(Shared {
+        synced: Mutex::new(Synced {
+            data: None,
+            slot: Slot::new(),
+            sndr_count: 1,
+            subs_count: 1,
+            rcvr_count: 0,
+            unseen: 0,
+        }),
+        notify_sndr: Notify::new(),
+        notify_rcvr: Notify::new(),
+    });
+    let shared2 = shared1.clone();
+    (Sender { shared: shared1 }, Enlister { shared: shared2 })
+}
+
+impl<T> Sender<T> {
     /// Wait until ready to send
     ///
     /// The returned [`Reservation`] handle may be used to send a value
     /// immediately (through [`Reservation::send`], which is not `async`).
-    pub async fn reserve(&self) -> Reservation<'_, T> {
+    pub async fn reserve(&self) -> Result<Reservation<'_, T>, RsrvError> {
         let synced = loop {
             {
                 let synced = self.shared.synced.lock();
                 if synced.unseen == 0 && synced.rcvr_count > 0 {
                     break synced;
                 }
+                if synced.subs_count == 0 && synced.rcvr_count == 0 {
+                    return Err(RsrvError);
+                }
                 self.shared.notify_sndr.notified()
             }
             .await;
         };
-        Reservation {
+        Ok(Reservation {
             shared: &self.shared,
             synced,
-        }
+        })
     }
     /// Send a value
     ///
     /// This method waits when there are no receivers or some receivers have
     /// not received the previous value yet.
-    pub async fn send(&self, value: T) {
-        self.reserve().await.send(value)
-    }
-    /// Create a new [`Receiver`] connected with the `Sender`
-    pub fn subscribe(&self) -> Receiver<T> {
-        self.shared.subscribe()
-    }
-    /// Create a new [`Subscriber`] allowing creation of [`Receiver`]s
-    /// connected with the `Sender`
-    pub fn subscriber(&self) -> Subscriber<T> {
-        Subscriber {
-            shared: self.shared.clone(),
+    pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
+        match self.reserve().await {
+            Ok(reservation) => {
+                reservation.send(value);
+                Ok(())
+            }
+            Err(RsrvError) => Err(SendError(value)),
         }
     }
 }
 
-impl<T> Reservation<'_, T>
-where
-    T: Clone,
-{
+impl<T> Reservation<'_, T> {
     /// Send a value
     pub fn send(mut self, value: T) {
         self.synced.slot = self.synced.slot.change();
@@ -195,11 +265,8 @@ where
     }
 }
 
-impl<T> Subscriber<T>
-where
-    T: Clone,
-{
-    /// Create a new [`Receiver`] connected with the originating [`Sender`]
+impl<T> Enlister<T> {
+    /// Create a new [`Receiver`] connected with the associated [`Sender`]
     pub fn subscribe(&self) -> Receiver<T> {
         self.shared.subscribe()
     }
@@ -213,7 +280,7 @@ where
     ///
     /// This method waits when there is no value to receive but returns `None`
     /// when all [`Sender`]s have been dropped.
-    pub async fn recv(&mut self) -> Option<T> {
+    pub async fn recv(&mut self) -> Result<T, RecvError> {
         let mut synced = loop {
             {
                 let synced = self.shared.synced.lock();
@@ -221,7 +288,7 @@ where
                     break synced;
                 }
                 if synced.sndr_count == 0 {
-                    return None;
+                    return Err(RecvError);
                 }
                 self.shared.notify_rcvr.notified()
             }
@@ -229,7 +296,7 @@ where
         };
         self.slot = synced.slot;
         synced.unseen -= 1;
-        Some(if synced.unseen == 0 {
+        Ok(if synced.unseen == 0 {
             self.shared.notify_sndr.notify_waiters();
             synced.data.take().unwrap()
         } else {
@@ -243,15 +310,16 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_broadcast() {
-        let sender = Sender::<i32>::new();
-        let mut rcvr1 = sender.subscribe();
-        let mut rcvr2 = sender.subscribe();
+        let (sender, subscriber) = channel::<i32>();
+        let mut rcvr1 = subscriber.subscribe();
+        let mut rcvr2 = subscriber.subscribe();
         let mut rcvr3 = rcvr2.clone();
+        drop(subscriber);
         let (_, vec1, vec2, vec3) = tokio::join!(
             async move {
-                sender.send(1).await;
-                sender.send(5).await;
-                sender.send(3).await;
+                sender.send(1).await.unwrap();
+                sender.send(5).await.unwrap();
+                sender.send(3).await.unwrap();
             },
             async move {
                 let mut vec = Vec::new();

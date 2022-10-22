@@ -83,13 +83,15 @@ pub enum RecvError {
 /// To send data to the connected `Receiver`s, use [`Sender::send`]. Call
 /// [`Sender::reset`] to indicate missing data.
 pub struct Sender<T> {
-    inner: broadcast_bp::Sender<Message<T>>,
+    inner_sender: broadcast_bp::Sender<Message<T>>,
+    inner_enlister: broadcast_bp::Enlister<Message<T>>,
 }
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
         Sender {
-            inner: self.inner.clone(),
+            inner_sender: self.inner_sender.clone(),
+            inner_enlister: self.inner_enlister.clone(),
         }
     }
 }
@@ -118,37 +120,40 @@ where
 {
     /// Create a new `Sender`
     pub fn new() -> Self {
+        let (inner_sender, inner_enlister) = broadcast_bp::channel();
         Self {
-            inner: broadcast_bp::Sender::new(),
+            inner_sender,
+            inner_enlister,
         }
     }
     /// Send data to all [`Receiver`]s which have been [connected]
     ///
     /// [connected]: ReceiverConnector::connect
     pub async fn send(&self, value: T) {
-        self.inner.send(Message::Value(value)).await;
+        self.inner_sender.send(Message::Value(value)).await.ok(); // TODO: handle error
     }
     /// Notify all [`Receiver`]s that some data is missing or that the data
     /// stream has been restarted
     pub async fn reset(&self) {
-        self.inner.send(Message::Reset).await;
+        self.inner_sender.send(Message::Reset).await.ok(); // TODO: handle error
     }
     /// Notify all [`Receiver`]s that the data stream has been completed
     pub async fn finish(&self) {
-        self.inner.send(Message::Finished).await;
+        self.inner_sender.send(Message::Finished).await.ok(); // TODO: handle error
     }
     /// Propagate a [`RecvError`] to all [`Receiver`]s
     ///
     /// [`RecvError::Closed`] is mapped to [`RecvError::Reset`] because a
     /// `Receiver` may be reconnected with another [`Sender`] later.
     pub async fn forward_error(&self, error: RecvError) {
-        self.inner
+        self.inner_sender
             .send(match error {
                 RecvError::Reset => Message::Reset,
                 RecvError::Finished => Message::Finished,
                 RecvError::Closed => Message::Reset,
             })
-            .await;
+            .await
+            .ok(); // TODO: handle error
     }
     /// Obtain a [`SenderConnector`], which can be used to [connect] a
     /// [`Receiver`] to this `Sender`
@@ -168,7 +173,7 @@ where
 /// To retrieve data from any connected `Sender`, a [`ReceiverStream`] must be
 /// obtained by calling the [`Receiver::stream`] method.
 pub struct Receiver<T> {
-    watch: watch::Sender<Option<broadcast_bp::Subscriber<Message<T>>>>,
+    watch: watch::Sender<Option<broadcast_bp::Enlister<Message<T>>>>,
 }
 
 /// Temporary handle to connect a [`Receiver`] to a [`Sender`]
@@ -195,7 +200,7 @@ impl<T> Copy for ReceiverConnector<'_, T> {}
 /// method. Mutable access to the `ReceiverStream` is then required to invoke
 /// one of its receive methods.
 pub struct ReceiverStream<T> {
-    watch: watch::Receiver<Option<broadcast_bp::Subscriber<Message<T>>>>,
+    watch: watch::Receiver<Option<broadcast_bp::Enlister<Message<T>>>>,
     inner: Option<broadcast_bp::Receiver<Message<T>>>,
     continuity: bool,
 }
@@ -251,7 +256,7 @@ where
     pub fn connect(&self, connector: SenderConnector<T>) {
         self.receiver
             .watch
-            .send_replace(Some(connector.sender.inner.subscriber()));
+            .send_replace(Some(connector.sender.inner_enlister.clone()));
     }
     /// Disconnect this `Receiver` from any [`Sender`] if connected
     pub fn disconnect(&self) {
@@ -300,19 +305,19 @@ where
                     }
                     message_opt = inner.recv() => {
                         match message_opt {
-                            Some(Message::Value(value)) => {
+                            Ok(Message::Value(value)) => {
                                 self.continuity = true;
                                 return Ok(value);
                             }
-                            Some(Message::Reset) => {
+                            Ok(Message::Reset) => {
                                 self.continuity = false;
                                 return Err(RecvError::Reset);
                             }
-                            Some(Message::Finished) => {
+                            Ok(Message::Finished) => {
                                 self.continuity = false;
                                 return Err(RecvError::Finished);
                             }
-                            None => self.inner = None,
+                            Err(_) => self.inner = None,
                         }
                     }
                 }
@@ -549,7 +554,10 @@ where
                         if underrun {
                             pending::<()>().await;
                         }
-                        Action::Drain(output.inner.reserve().await)
+                        match output.inner_sender.reserve().await {
+                            Ok(reservation) => Action::Drain(reservation),
+                            Err(_) => Action::Close,
+                        }
                     } => action,
                 } {
                     Action::Fill(message) => {

@@ -21,7 +21,7 @@ use std::path::Path;
 pub struct ClosureSource<T, E> {
     sender_connector: SenderConnector<T>,
     abort: watch::Sender<()>,
-    join_handle: JoinHandle<Result<(), E>>,
+    join_handle: JoinHandle<Result<bool, E>>,
 }
 
 impl<T, E> Producer<T> for ClosureSource<T, E> {
@@ -55,18 +55,18 @@ where
         let join_handle = spawn(async move {
             loop {
                 select! {
-                    _ = abort_recv.changed() => return Ok(()),
+                    _ = abort_recv.changed() => return Ok(false),
                     result = retrieve() => {
                         match result {
                             Ok(Some(data)) => if let Err(_) = sender.send(data).await {
-                                return Ok(());
+                                return Ok(false);
                             },
                             Ok(None) => {
-                                if let Err(_) = sender.finish().await { return Ok(()); }
-                                return Ok(());
+                                sender.finish().await.ok();
+                                return Ok(true);
                             }
                             Err(err) => {
-                                if let Err(_) = sender.reset().await { return Ok(()); }
+                                sender.reset().await.ok();
                                 return Err(err);
                             }
                         }
@@ -81,11 +81,27 @@ where
         }
     }
     /// Wait for stream to finish
-    pub async fn wait(self) -> Result<(), E> {
+    ///
+    /// Returns `Ok(true)` if `retrieve` closure passed to [`new`] returned
+    /// [`None`] to indicate completion.
+    /// Returns `Ok(false)` if the last consumer was disconnected before
+    /// completion.
+    /// Returns `Err` if `retrieve` closure reported an error.
+    ///
+    /// [`new`]: ClosureSource::new
+    pub async fn wait(self) -> Result<bool, E> {
+        drop(self.sender_connector);
         self.join_handle.await.expect("task panicked")
     }
     /// Stop operation
-    pub async fn stop(self) -> Result<(), E> {
+    ///
+    /// Returns `Ok(true)` if `retrieve` closure passed to [`new`] returned
+    /// [`None`] to indicate completion.
+    /// Returns `Ok(false)` if called before completion.
+    /// Returns `Err` if `retrieve` closure reported an error.
+    ///
+    /// [`new`]: ClosureSource::new
+    pub async fn stop(self) -> Result<bool, E> {
         drop(self.abort);
         self.join_handle.await.expect("task panicked")
     }
@@ -146,11 +162,24 @@ impl F32BeReader {
         )
     }
     /// Wait for stream to finish
-    pub async fn wait(self) -> Result<(), io::Error> {
+    ///
+    /// Returns `Ok(true)` if `reader` passed to [`new`] reported EOF.
+    /// Returns `Ok(false)` if the last consumer was disconnected before
+    /// completion.
+    /// Returns `Err` in case of an I/O error.
+    ///
+    /// [`new`]: F32BeReader::new
+    pub async fn wait(self) -> Result<bool, io::Error> {
         self.inner.wait().await
     }
     /// Stop operation
-    pub async fn stop(self) -> Result<(), io::Error> {
+    ///
+    /// Returns `Ok(true)` if `reader` passed to [`new`] reported EOF.
+    /// Returns `Ok(false)` if `reader` did not report EOF yet.
+    /// Returns `Err` in case of an I/O error.
+    ///
+    /// [`new`]: F32BeReader::new
+    pub async fn stop(self) -> Result<bool, io::Error> {
         self.inner.stop().await
     }
 }
@@ -337,7 +366,7 @@ mod tests {
         assert_eq!(receiver.recv().await, Ok(2));
         assert_eq!(receiver.recv().await, Ok(3));
         // optional:
-        // assert_eq!(source.stop().await, Ok(()));
+        // assert_eq!(source.stop().await, Ok(false));
         drop(source);
         assert_eq!(receiver.recv().await, Err(RecvError::Reset));
         assert_eq!(receiver.recv().await, Err(RecvError::Closed));

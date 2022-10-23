@@ -33,12 +33,12 @@ where
 /// Calculate bandwidth in hertz from fourier transformed samples
 ///
 /// Note: The [`Samples`] must be already in Fourier transformed form,
-/// e.g. by using [`blocks::Fourier`].
+/// e.g. by using [`blocks::analysis::Fourier`].
 ///
 /// The `double_percentile` parameter determines how much energy is allowed to
 /// be outside the measured bandwidth (a useful value may be `0.01`).
 ///
-/// [`blocks::Fourier`]: crate::blocks::Fourier
+/// [`blocks::analysis::Fourier`]: crate::blocks::analysis::Fourier
 pub fn bandwidth<Flt>(double_percentile: f64, fourier: &Samples<Complex<Flt>>) -> f64
 where
     Flt: Float,

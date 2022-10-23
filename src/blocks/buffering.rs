@@ -1,3 +1,5 @@
+//! Buffering
+
 use crate::flow::*;
 use crate::samples::*;
 
@@ -214,3 +216,6 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {}

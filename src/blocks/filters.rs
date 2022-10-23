@@ -1,4 +1,4 @@
-//! Filters
+//! Digital filters
 
 use crate::bufferpool::*;
 use crate::flow::*;
@@ -103,9 +103,9 @@ struct FilterParams {
 /// [`sample_rate`]: Samples::sample_rate
 /// [`chunk`]: Samples::chunk
 /// [`Kaiser::with_null_at_bin(x)`]: Kaiser::with_null_at_bin
-/// [`Rechunker`]: crate::blocks::Rechunker
-/// [`Downsampler`]: crate::blocks::Downsampler
-/// [`Upsampler`]: crate::blocks::Upsampler
+/// [`Rechunker`]: crate::blocks::chunks::Rechunker
+/// [`Downsampler`]: crate::blocks::resampling::Downsampler
+/// [`Upsampler`]: crate::blocks::resampling::Upsampler
 pub struct Filter<Flt> {
     receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
     sender_connector: SenderConnector<Samples<Complex<Flt>>>,

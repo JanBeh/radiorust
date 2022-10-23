@@ -57,7 +57,7 @@ async fn main() {
     freq_shifter.connect_to_producer(&sdr_rx);
     let downsampler = blocks::Downsampler::<f32>::new(1024, 102400.0, max_bandwidth);
     downsampler.connect_to_producer(&freq_shifter);
-    let filter = blocks::filters::Filter::new(move |_, freq| {
+    let filter = blocks::Filter::new(move |_, freq| {
         if freq.abs() <= max_bandwidth / 2.0 {
             Complex::from(1.0)
         } else {

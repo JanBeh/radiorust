@@ -30,7 +30,7 @@ impl SimpleSdr {
         let downsample1 = blocks::Downsampler::<f32>::new(16384, 384000.0, 200000.0);
         downsample1.connect_to_producer(&freq_shifter);
 
-        let filter1 = blocks::filters::Filter::new(|_, freq| {
+        let filter1 = blocks::Filter::new(|_, freq| {
             if freq.abs() <= 100000.0 {
                 Complex::from(1.0)
             } else {

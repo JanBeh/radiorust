@@ -34,13 +34,96 @@
 //! [`Producer::connect_to_consumer`]: crate::flow::Producer::connect_to_consumer
 //! [`Consumer::connect_to_producer`]: crate::flow::Consumer::connect_to_producer
 
-mod basic;
-pub use basic::*;
-
-mod buffering;
-pub use buffering::*;
-
+pub mod analysis;
+pub mod buffering;
+pub mod chunks;
 pub mod filters;
 pub mod io;
 pub mod modulation;
 pub mod morse;
+pub mod resampling;
+pub mod transform;
+
+/// Re-export of basic blocks
+pub mod prelude {
+    pub use super::analysis::Fourier;
+    pub use super::buffering::Buffer;
+    pub use super::chunks::{Rechunker, Overlapper};
+    pub use super::filters::Filter;
+    pub use super::resampling::{Downsampler, Upsampler};
+    pub use super::transform::{FreqShifter, Function};
+}
+
+pub use self::analysis::Fourier;
+pub use self::buffering::Buffer;
+pub use self::chunks::{Rechunker, Overlapper};
+pub use self::filters::Filter;
+pub use self::resampling::{Downsampler, Upsampler};
+pub use self::transform::{FreqShifter, Function};
+
+use crate::flow::*;
+
+use tokio::task::spawn;
+
+/// Block which performs no operation on the received data and simply sends it
+/// out unchanged
+///
+/// This block mostly serves documentation purposes but may also be used to
+/// (re-)connect multiple [`Receiver`]s at once.
+/// Note that most blocks don't work with `T` but [`Samples<T>`] or
+/// `Samples<Complex<Flt>>`.
+///
+/// [`Samples<T>`]: crate::samples::Samples
+pub struct Nop<T> {
+    receiver_connector: ReceiverConnector<T>,
+    sender_connector: SenderConnector<T>,
+}
+
+impl<T> Consumer<T> for Nop<T> {
+    fn receiver_connector(&self) -> &ReceiverConnector<T> {
+        &self.receiver_connector
+    }
+}
+
+impl<T> Producer<T> for Nop<T> {
+    fn sender_connector(&self) -> &SenderConnector<T> {
+        &self.sender_connector
+    }
+}
+
+impl<T> Nop<T>
+where
+    T: Clone + Send + 'static,
+{
+    /// Creates a block which does nothing but pass data through
+    pub fn new() -> Self {
+        let (mut receiver, receiver_connector) = new_receiver::<T>();
+        let (sender, sender_connector) = new_sender::<T>();
+        spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(msg) => {
+                        if let Err(_) = sender.send(msg).await {
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            receiver_connector,
+            sender_connector,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {}

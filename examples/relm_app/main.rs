@@ -1,3 +1,4 @@
+use clap::Parser;
 use gtk::prelude::*;
 use relm4::{gtk, send, AppUpdate, Model, RelmApp, Sender, WidgetPlus, Widgets};
 use tokio::runtime::Runtime;
@@ -5,6 +6,18 @@ use tokio::runtime::Runtime;
 use radiorust::*;
 mod simple_receiver;
 use simple_receiver::*;
+
+#[derive(Parser, Debug)]
+#[command(
+    version,
+    about = "Wide FM radio playback",
+    long_about = None,
+)]
+struct Args {
+    /// Frequency in MHz
+    #[arg(short = 'f', long)]
+    frequency: f64,
+}
 
 struct AppModel {
     _rt: Runtime,
@@ -90,9 +103,10 @@ impl Widgets<AppModel, ()> for AppWidgets {
 }
 
 fn main() {
+    let args = Args::parse();
     let rt = Runtime::new().unwrap();
     let enter = rt.enter();
-    let simple_sdr = SimpleSdr::new();
+    let simple_sdr = SimpleSdr::new(1e6 * args.frequency);
     drop(enter);
     let model = AppModel {
         _rt: rt,

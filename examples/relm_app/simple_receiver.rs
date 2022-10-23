@@ -13,8 +13,7 @@ pub struct SimpleSdr {
 }
 
 impl SimpleSdr {
-    pub fn new() -> Self {
-        let frequency = 100e6;
+    pub fn new(frequency: f64) -> Self {
         let sample_rate = 1024000.0;
         let bandwidth = 1024000.0;
         let device = soapysdr::Device::new("").unwrap();
@@ -25,7 +24,7 @@ impl SimpleSdr {
         let mut sdr_rx = blocks::io::rf::soapysdr::SoapySdrRx::new(rx_stream, sample_rate);
         sdr_rx.activate().unwrap();
 
-        let freq_shifter = blocks::FreqShifter::<f32>::with_shift(0.3e6);
+        let freq_shifter = blocks::FreqShifter::<f32>::with_shift(0.0e6);
         freq_shifter.connect_to_producer(&sdr_rx);
 
         let downsample1 = blocks::Downsampler::<f32>::new(16384, 384000.0, 200000.0);

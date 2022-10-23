@@ -121,7 +121,9 @@ where
         let (mut receiver, receiver_connector) = new_receiver::<Samples<T>>();
         let (sender, sender_connector) = new_sender::<Samples<T>>();
         let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
-        closure_send.send(closure).ok(); // TODO: unwrap?
+        closure_send
+            .send(closure)
+            .unwrap_or_else(|_| unreachable!());
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
             let mut closure_opt: Option<Box<dyn Fn(T) -> T + Send + Sync + 'static>> = None;

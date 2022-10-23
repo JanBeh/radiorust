@@ -18,22 +18,15 @@ use std::path::Path;
 ///
 /// The type argument `E` indicates a possible reported error type by the
 /// callback.
-///
-/// The block will stop sending when dropped, unless it is [detached].
-///
-/// [detached]: ClosureSource::detach
 pub struct ClosureSource<T, E> {
-    sender: Sender<T>,
+    sender_connector: SenderConnector<T>,
     abort: watch::Sender<()>,
     join_handle: JoinHandle<Result<(), E>>,
 }
 
-impl<T, E> Producer<T> for ClosureSource<T, E>
-where
-    T: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<T> {
-        self.sender.connector()
+impl<T, E> Producer<T> for ClosureSource<T, E> {
+    fn sender_connector(&self) -> &SenderConnector<T> {
+        &self.sender_connector
     }
 }
 
@@ -57,8 +50,7 @@ where
         F: FnMut() -> R + Send + 'static,
         R: Future<Output = Result<Option<T>, E>> + Send,
     {
-        let sender = Sender::<T>::new();
-        let output = sender.clone();
+        let (sender, sender_connector) = new_sender::<T>();
         let (abort_send, mut abort_recv) = watch::channel::<()>(());
         let join_handle = spawn(async move {
             loop {
@@ -66,13 +58,15 @@ where
                     _ = abort_recv.changed() => return Ok(()),
                     result = retrieve() => {
                         match result {
-                            Ok(Some(data)) => output.send(data).await,
+                            Ok(Some(data)) => if let Err(_) = sender.send(data).await {
+                                return Ok(());
+                            },
                             Ok(None) => {
-                                output.finish().await;
+                                if let Err(_) = sender.finish().await { return Ok(()); }
                                 return Ok(());
                             }
                             Err(err) => {
-                                output.reset().await;
+                                if let Err(_) = sender.reset().await { return Ok(()); }
                                 return Err(err);
                             }
                         }
@@ -81,20 +75,10 @@ where
             }
         });
         Self {
-            sender,
+            sender_connector,
             abort: abort_send,
             join_handle,
         }
-    }
-    /// Detach operation (consume block but continue working)
-    ///
-    /// Note that this method may leak resources if the used closure never
-    /// indicates the end of stream or an error condition, or if there is no
-    /// receiver anymore.
-    pub fn detach(self) {
-        spawn(async move {
-            self.wait().await.ok();
-        });
     }
     /// Wait for stream to finish
     pub async fn wait(self) -> Result<(), E> {
@@ -114,7 +98,7 @@ pub struct F32BeReader {
 }
 
 impl Producer<Samples<Complex<f32>>> for F32BeReader {
-    fn sender_connector(&self) -> SenderConnector<'_, Samples<Complex<f32>>> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<f32>>> {
         self.inner.sender_connector()
     }
 }
@@ -161,13 +145,6 @@ impl F32BeReader {
             BufReader::new(File::create(path).expect("could not open file for source")),
         )
     }
-    /// Detach operation (consume block but continue working)
-    ///
-    /// Note that this method may leak resources if there is no receiver
-    /// anymore.
-    pub fn detach(self) {
-        self.inner.detach();
-    }
     /// Wait for stream to finish
     pub async fn wait(self) -> Result<(), io::Error> {
         self.inner.wait().await
@@ -199,7 +176,7 @@ enum ContinuousClosureSinkStatus<E> {
 /// The type argument `E` indicates a possible reported error type by the
 /// callback.
 pub struct ContinuousClosureSink<T, E> {
-    receiver: Receiver<T>,
+    receiver_connector: ReceiverConnector<T>,
     join_handle: JoinHandle<ContinuousClosureSinkStatus<E>>,
 }
 
@@ -207,8 +184,8 @@ impl<T, E> Consumer<T> for ContinuousClosureSink<T, E>
 where
     T: Clone,
 {
-    fn receiver_connector(&self) -> ReceiverConnector<T> {
-        self.receiver.connector()
+    fn receiver_connector(&self) -> &ReceiverConnector<T> {
+        &self.receiver_connector
     }
 }
 
@@ -234,11 +211,10 @@ where
         F: FnMut(T) -> R + Send + 'static,
         R: Future<Output = Result<(), E>> + Send,
     {
-        let receiver = Receiver::<T>::new();
-        let mut input = receiver.stream();
+        let (mut receiver, receiver_connector) = new_receiver::<T>();
         let join_handle = spawn(async move {
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(data) => match process(data).await {
                         Ok(()) => (),
                         Err(err) => return ContinuousClosureSinkStatus::Report(err),
@@ -248,7 +224,7 @@ where
             }
         });
         Self {
-            receiver,
+            receiver_connector,
             join_handle,
         }
     }
@@ -265,7 +241,8 @@ where
     }
     /// Stop operation
     pub async fn stop(self) -> Result<(), ContinuousClosureSinkError<E>> {
-        drop(self.receiver);
+        self.receiver_connector.disconnect();
+        drop(self.receiver_connector);
         match self.join_handle.await {
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Closed)) => Ok(()),
             Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
@@ -295,8 +272,8 @@ pub struct ContinuousF32BeWriter {
 }
 
 impl Consumer<Samples<Complex<f32>>> for ContinuousF32BeWriter {
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<f32>>> {
-        self.inner.receiver.connector()
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<f32>>> {
+        self.inner.receiver_connector()
     }
 }
 
@@ -353,18 +330,17 @@ mod tests {
                 }
             }
         });
-        let receiver = Receiver::<i32>::new();
-        receiver.connect_to_producer(&source);
-        let mut output = receiver.stream();
-        drop(receiver);
-        assert_eq!(output.recv().await, Ok(1));
-        assert_eq!(output.recv().await, Ok(2));
-        assert_eq!(output.recv().await, Ok(3));
+        let (mut receiver, receiver_connector) = new_receiver::<i32>();
+        receiver_connector.connect_to_producer(&source);
+        drop(receiver_connector);
+        assert_eq!(receiver.recv().await, Ok(1));
+        assert_eq!(receiver.recv().await, Ok(2));
+        assert_eq!(receiver.recv().await, Ok(3));
         // optional:
         // assert_eq!(source.stop().await, Ok(()));
         drop(source);
-        assert_eq!(output.recv().await, Err(RecvError::Reset));
-        assert_eq!(output.recv().await, Err(RecvError::Closed));
-        assert_eq!(output.recv().await, Err(RecvError::Closed));
+        assert_eq!(receiver.recv().await, Err(RecvError::Reset));
+        assert_eq!(receiver.recv().await, Err(RecvError::Closed));
+        assert_eq!(receiver.recv().await, Err(RecvError::Closed));
     }
 }

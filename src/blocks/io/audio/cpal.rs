@@ -11,13 +11,13 @@ use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 
 /// Audio player
 pub struct AudioPlayer {
-    receiver: Receiver<Samples<Complex<f32>>>,
+    receiver_connector: ReceiverConnector<Samples<Complex<f32>>>,
     stream: cpal::Stream,
 }
 
 impl Consumer<Samples<Complex<f32>>> for AudioPlayer {
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<f32>>> {
-        self.receiver.connector()
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<f32>>> {
+        &self.receiver_connector
     }
 }
 
@@ -28,8 +28,7 @@ impl AudioPlayer {
         let rt = tokio::runtime::Handle::current();
         let sample_rate_int = sample_rate.round() as u32;
         let mut buffer_size: u32 = buffer_size.try_into().unwrap();
-        let receiver = Receiver::<Samples<Complex<f32>>>::new();
-        let mut input = receiver.stream();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -67,7 +66,7 @@ impl AudioPlayer {
                     current_chunk_opt.take().unwrap()
                 } else {
                     loop {
-                        match rt.block_on(input.recv()) {
+                        match rt.block_on(receiver.recv()) {
                             Ok(Samples {
                                 sample_rate: rcvd_sample_rate,
                                 chunk,
@@ -96,7 +95,10 @@ impl AudioPlayer {
             .build_output_stream(&config, write_audio, err_fn)
             .unwrap();
         stream.play().unwrap();
-        Self { receiver, stream }
+        Self {
+            receiver_connector,
+            stream,
+        }
     }
     /// Resume playback
     pub fn resume(&self) {

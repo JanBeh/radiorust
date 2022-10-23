@@ -22,25 +22,19 @@ use std::sync::Arc;
 /// Note that most blocks don't work with `T` but [`Samples<T>`] or
 /// `Samples<Complex<Flt>>`.
 pub struct Nop<T> {
-    receiver: Receiver<T>,
-    sender: Sender<T>,
+    receiver_connector: ReceiverConnector<T>,
+    sender_connector: SenderConnector<T>,
 }
 
-impl<T> Consumer<T> for Nop<T>
-where
-    T: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<T> {
-        self.receiver.connector()
+impl<T> Consumer<T> for Nop<T> {
+    fn receiver_connector(&self) -> &ReceiverConnector<T> {
+        &self.receiver_connector
     }
 }
 
-impl<T> Producer<T> for Nop<T>
-where
-    T: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<T> {
-        self.sender.connector()
+impl<T> Producer<T> for Nop<T> {
+    fn sender_connector(&self) -> &SenderConnector<T> {
+        &self.sender_connector
     }
 }
 
@@ -50,16 +44,20 @@ where
 {
     /// Creates a block which does nothing but pass data through
     pub fn new() -> Self {
-        let receiver = Receiver::<T>::new();
-        let sender = Sender::<T>::new();
-        let mut input: ReceiverStream<T> = receiver.stream();
-        let output: Sender<T> = sender.clone();
+        let (mut receiver, receiver_connector) = new_receiver::<T>();
+        let (sender, sender_connector) = new_sender::<T>();
         spawn(async move {
             loop {
-                match input.recv().await {
-                    Ok(msg) => output.send(msg).await,
+                match receiver.recv().await {
+                    Ok(msg) => {
+                        if let Err(_) = sender.send(msg).await {
+                            return;
+                        }
+                    }
                     Err(err) => {
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -67,7 +65,10 @@ where
                 }
             }
         });
-        Self { receiver, sender }
+        Self {
+            receiver_connector,
+            sender_connector,
+        }
     }
 }
 
@@ -84,26 +85,20 @@ where
 /// # });
 /// ```
 pub struct Function<T> {
-    receiver: Receiver<Samples<T>>,
-    sender: Sender<Samples<T>>,
+    receiver_connector: ReceiverConnector<Samples<T>>,
+    sender_connector: SenderConnector<Samples<T>>,
     closure: mpsc::UnboundedSender<Box<dyn Fn(T) -> T + Send + Sync + 'static>>,
 }
 
-impl<T> Consumer<Samples<T>> for Function<T>
-where
-    T: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
-        self.receiver.connector()
+impl<T> Consumer<Samples<T>> for Function<T> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<T>> {
+        &self.receiver_connector
     }
 }
 
-impl<T> Producer<Samples<T>> for Function<T>
-where
-    T: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<T>> {
-        self.sender.connector()
+impl<T> Producer<Samples<T>> for Function<T> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<T>> {
+        &self.sender_connector
     }
 }
 
@@ -123,17 +118,15 @@ where
         Self::new_internal(Box::new(closure))
     }
     fn new_internal(closure: Box<dyn Fn(T) -> T + Send + Sync + 'static>) -> Self {
-        let receiver = Receiver::<Samples<T>>::new();
-        let sender = Sender::<Samples<T>>::new();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<T>>();
+        let (sender, sender_connector) = new_sender::<Samples<T>>();
         let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
-        closure_send.send(closure).ok();
-        let mut input = receiver.stream();
-        let output = sender.clone();
+        closure_send.send(closure).ok(); // TODO: unwrap?
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
             let mut closure_opt: Option<Box<dyn Fn(T) -> T + Send + Sync + 'static>> = None;
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(Samples {
                         sample_rate,
                         chunk: input_chunk,
@@ -149,15 +142,20 @@ where
                         for sample in input_chunk.iter() {
                             output_chunk.push(closure(sample.clone()));
                         }
-                        output
+                        if let Err(_) = sender
                             .send(Samples {
                                 sample_rate: sample_rate,
                                 chunk: output_chunk.finalize(),
                             })
-                            .await;
+                            .await
+                        {
+                            return;
+                        }
                     }
                     Err(err) => {
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -166,8 +164,8 @@ where
             }
         });
         Self {
-            receiver,
-            sender,
+            receiver_connector,
+            sender_connector,
             closure: closure_send,
         }
     }
@@ -189,26 +187,20 @@ where
 ///
 /// [`filters::Filter`]: crate::blocks::filters::Filter
 pub struct Rechunker<T> {
-    receiver: Receiver<Samples<T>>,
-    sender: Sender<Samples<T>>,
+    receiver_connector: ReceiverConnector<Samples<T>>,
+    sender_connector: SenderConnector<Samples<T>>,
     output_chunk_len: watch::Sender<usize>,
 }
 
-impl<T> Consumer<Samples<T>> for Rechunker<T>
-where
-    T: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
-        self.receiver.connector()
+impl<T> Consumer<Samples<T>> for Rechunker<T> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<T>> {
+        &self.receiver_connector
     }
 }
 
-impl<T> Producer<Samples<T>> for Rechunker<T>
-where
-    T: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<T>> {
-        self.sender.connector()
+impl<T> Producer<Samples<T>> for Rechunker<T> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<T>> {
+        &self.sender_connector
     }
 }
 
@@ -219,11 +211,9 @@ where
     /// Create new `Rechunker` block with given output chunk length
     pub fn new(mut output_chunk_len: usize) -> Self {
         assert!(output_chunk_len > 0, "chunk length must be positive");
-        let receiver = Receiver::<Samples<T>>::new();
-        let sender = Sender::<Samples<T>>::new();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<T>>();
+        let (sender, sender_connector) = new_sender::<Samples<T>>();
         let (output_chunk_len_send, mut output_chunk_len_recv) = watch::channel(output_chunk_len);
-        let mut input = receiver.stream();
-        let output = sender.clone();
         spawn(async move {
             let mut buf_pool = ChunkBufPool::<T>::new();
             let mut samples_opt: Option<Samples<T>> = None;
@@ -232,18 +222,22 @@ where
                 let mut samples = match samples_opt {
                     Some(x) => x,
                     None => loop {
-                        match input.recv().await {
+                        match receiver.recv().await {
                             Ok(samples) => {
                                 if let Some((sample_rate, _)) = patchwork_opt {
                                     if sample_rate != samples.sample_rate {
                                         patchwork_opt = None;
-                                        output.reset().await;
+                                        if let Err(_) = sender.reset().await {
+                                            return;
+                                        }
                                     }
                                 }
                                 break samples;
                             }
                             Err(err) => {
-                                output.forward_error(err).await;
+                                if let Err(_) = sender.forward_error(err).await {
+                                    return;
+                                }
                                 if err == RecvError::Closed {
                                     return;
                                 }
@@ -259,12 +253,15 @@ where
                     if patchwork_chunk.len() > output_chunk_len {
                         let mut chunk = patchwork_chunk.finalize();
                         while chunk.len() > output_chunk_len {
-                            output
+                            if let Err(_) = sender
                                 .send(Samples {
                                     sample_rate: samples.sample_rate,
                                     chunk: chunk.separate_beginning(output_chunk_len),
                                 })
-                                .await;
+                                .await
+                            {
+                                return;
+                            }
                         }
                         patchwork_chunk = buf_pool.get();
                         patchwork_chunk.extend_from_slice(&chunk);
@@ -276,22 +273,28 @@ where
                         patchwork_opt = Some((sample_rate, patchwork_chunk));
                     } else if samples.chunk.len() == missing {
                         patchwork_chunk.extend_from_slice(&samples.chunk);
-                        output
+                        if let Err(_) = sender
                             .send(Samples {
                                 sample_rate,
                                 chunk: patchwork_chunk.finalize(),
                             })
-                            .await;
+                            .await
+                        {
+                            return;
+                        }
                         samples_opt = None;
                         patchwork_opt = None;
                     } else if samples.chunk.len() >= missing {
                         patchwork_chunk.extend_from_slice(&samples.chunk[0..missing]);
-                        output
+                        if let Err(_) = sender
                             .send(Samples {
                                 sample_rate,
                                 chunk: patchwork_chunk.finalize(),
                             })
-                            .await;
+                            .await
+                        {
+                            return;
+                        }
                         samples.chunk.discard_beginning(missing);
                         samples_opt = Some(samples);
                         patchwork_opt = None;
@@ -300,15 +303,20 @@ where
                     }
                 } else {
                     while samples.chunk.len() > output_chunk_len {
-                        output
+                        if let Err(_) = sender
                             .send(Samples {
                                 sample_rate: samples.sample_rate,
                                 chunk: samples.chunk.separate_beginning(output_chunk_len),
                             })
-                            .await;
+                            .await
+                        {
+                            return;
+                        }
                     }
                     if samples.chunk.len() == output_chunk_len {
-                        output.send(samples).await;
+                        if let Err(_) = sender.send(samples).await {
+                            return;
+                        }
                         samples_opt = None;
                         patchwork_opt = None;
                     } else {
@@ -319,8 +327,8 @@ where
             }
         });
         Self {
-            receiver,
-            sender,
+            receiver_connector,
+            sender_connector,
             output_chunk_len: output_chunk_len_send,
         }
     }
@@ -337,25 +345,19 @@ where
 
 /// Block that concatenates successive chunks to produce overlapping chunks
 pub struct Overlapper<T> {
-    receiver: Receiver<Samples<T>>,
-    sender: Sender<Samples<T>>,
+    receiver_connector: ReceiverConnector<Samples<T>>,
+    sender_connector: SenderConnector<Samples<T>>,
 }
 
-impl<T> Consumer<Samples<T>> for Overlapper<T>
-where
-    T: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<T>> {
-        self.receiver.connector()
+impl<T> Consumer<Samples<T>> for Overlapper<T> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<T>> {
+        &self.receiver_connector
     }
 }
 
-impl<T> Producer<Samples<T>> for Overlapper<T>
-where
-    T: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<T>> {
-        self.sender.connector()
+impl<T> Producer<Samples<T>> for Overlapper<T> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<T>> {
+        &self.sender_connector
     }
 }
 
@@ -367,15 +369,13 @@ where
     /// overlapping
     pub fn new(chunk_count: usize) -> Self {
         assert!(chunk_count > 0, "chunk count must be positive");
-        let receiver = Receiver::<Samples<T>>::new();
-        let sender = Sender::<Samples<T>>::new();
-        let mut input = receiver.stream();
-        let output = sender.clone();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<T>>();
+        let (sender, sender_connector) = new_sender::<Samples<T>>();
         spawn(async move {
             let mut buf_pool = ChunkBufPool::<T>::new();
             let mut history: VecDeque<Samples<T>> = VecDeque::with_capacity(chunk_count);
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(samples) => {
                         history.push_back(samples);
                         if history.len() >= chunk_count {
@@ -390,18 +390,23 @@ where
                             for samples in history.iter() {
                                 output_chunk.extend_from_slice(&samples.chunk);
                             }
-                            output
+                            if let Err(_) = sender
                                 .send(Samples {
                                     sample_rate,
                                     chunk: output_chunk.finalize(),
                                 })
-                                .await;
+                                .await
+                            {
+                                return;
+                            }
                             history.pop_front();
                         }
                     }
                     Err(err) => {
                         history = VecDeque::new();
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -409,33 +414,30 @@ where
                 }
             }
         });
-        Self { receiver, sender }
+        Self {
+            receiver_connector,
+            sender_connector,
+        }
     }
 }
 
 /// Complex oscillator and mixer, which shifts all frequencies in an I/Q stream
 pub struct FreqShifter<Flt> {
-    receiver: Receiver<Samples<Complex<Flt>>>,
-    sender: Sender<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
     precision: f64,
     shift: watch::Sender<f64>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for FreqShifter<Flt>
-where
-    Flt: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
-        self.receiver.connector()
+impl<Flt> Consumer<Samples<Complex<Flt>>> for FreqShifter<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
     }
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for FreqShifter<Flt>
-where
-    Flt: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
-        self.sender.connector()
+impl<Flt> Producer<Samples<Complex<Flt>>> for FreqShifter<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
     }
 }
 
@@ -466,18 +468,16 @@ where
             let numer: isize = (denom as f64 * frequency / sample_rate).round() as isize;
             Ratio::new(numer, denom)
         };
-        let receiver = Receiver::<Samples<Complex<Flt>>>::new();
-        let sender = Sender::<Samples<Complex<Flt>>>::new();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         let (shift_send, mut shift_recv) = watch::channel(shift);
-        let mut input = receiver.stream();
-        let output = sender.clone();
         spawn(async move {
             let mut phase_vec: Vec<Complex<Flt>> = Vec::new();
             let mut phase_idx: usize = 0;
             let mut prev_sample_rate: Option<f64> = None;
             let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(Samples {
                         sample_rate,
                         chunk: input_chunk,
@@ -513,15 +513,20 @@ where
                                 phase_idx = 0;
                             }
                         }
-                        output
+                        if let Err(_) = sender
                             .send(Samples {
                                 sample_rate: sample_rate,
                                 chunk: output_chunk.finalize(),
                             })
-                            .await;
+                            .await
+                        {
+                            return;
+                        }
                     }
                     Err(err) => {
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -529,9 +534,9 @@ where
                 }
             }
         });
-        FreqShifter {
-            receiver,
-            sender,
+        Self {
+            receiver_connector,
+            sender_connector,
             precision,
             shift: shift_send,
         }
@@ -561,25 +566,19 @@ where
 
 /// Reduce sample rate
 pub struct Downsampler<Flt> {
-    receiver: Receiver<Samples<Complex<Flt>>>,
-    sender: Sender<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Downsampler<Flt>
-where
-    Flt: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
-        self.receiver.connector()
+impl<Flt> Consumer<Samples<Complex<Flt>>> for Downsampler<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
     }
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for Downsampler<Flt>
-where
-    Flt: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
-        self.sender.connector()
+impl<Flt> Producer<Samples<Complex<Flt>>> for Downsampler<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
     }
 }
 
@@ -617,10 +616,8 @@ where
             bandwidth < output_rate,
             "bandwidth must be smaller than output sample rate"
         );
-        let receiver = Receiver::<Samples<Complex<Flt>>>::new();
-        let sender = Sender::<Samples<Complex<Flt>>>::new();
-        let mut input = receiver.stream();
-        let output = sender.clone();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut output_chunk = buf_pool.get_with_capacity(output_chunk_len);
         spawn(async move {
@@ -631,7 +628,7 @@ where
             let mut ringbuf_pos: usize = Default::default();
             let mut pos: f64 = Default::default();
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(Samples {
                         sample_rate: input_rate,
                         chunk: input_chunk,
@@ -684,19 +681,24 @@ where
                                 }
                                 output_chunk.push(sum);
                                 if output_chunk.len() >= output_chunk_len {
-                                    output
+                                    if let Err(_) = sender
                                         .send(Samples {
                                             sample_rate: output_rate,
                                             chunk: output_chunk.finalize(),
                                         })
-                                        .await;
+                                        .await
+                                    {
+                                        return;
+                                    }
                                     output_chunk = buf_pool.get_with_capacity(output_chunk_len);
                                 }
                             }
                         }
                     }
                     Err(err) => {
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -704,31 +706,28 @@ where
                 }
             }
         });
-        Downsampler { receiver, sender }
+        Self {
+            receiver_connector,
+            sender_connector,
+        }
     }
 }
 
 /// Increase sample rate
 pub struct Upsampler<Flt> {
-    receiver: Receiver<Samples<Complex<Flt>>>,
-    sender: Sender<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Upsampler<Flt>
-where
-    Flt: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
-        self.receiver.connector()
+impl<Flt> Consumer<Samples<Complex<Flt>>> for Upsampler<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
     }
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for Upsampler<Flt>
-where
-    Flt: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
-        self.sender.connector()
+impl<Flt> Producer<Samples<Complex<Flt>>> for Upsampler<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
     }
 }
 
@@ -763,10 +762,8 @@ where
     ) -> Self {
         assert!(output_rate >= 0.0, "output sample rate must be positive");
         assert!(bandwidth >= 0.0, "bandwidth must be positive");
-        let receiver = Receiver::<Samples<Complex<Flt>>>::new();
-        let sender = Sender::<Samples<Complex<Flt>>>::new();
-        let mut input = receiver.stream();
-        let output = sender.clone();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut output_chunk = buf_pool.get_with_capacity(output_chunk_len);
         spawn(async move {
@@ -776,7 +773,7 @@ where
             let mut ringbuf_pos: usize = Default::default();
             let mut pos: f64 = Default::default();
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(Samples {
                         sample_rate: input_rate,
                         chunk: input_chunk,
@@ -827,12 +824,15 @@ where
                                 output_chunk.push(ringbuf[ringbuf_pos]);
                                 ringbuf[ringbuf_pos] = Complex::from(Flt::zero());
                                 if output_chunk.len() >= output_chunk_len {
-                                    output
+                                    if let Err(_) = sender
                                         .send(Samples {
                                             sample_rate: output_rate,
                                             chunk: output_chunk.finalize(),
                                         })
-                                        .await;
+                                        .await
+                                    {
+                                        return;
+                                    }
                                     output_chunk = buf_pool.get_with_capacity(output_chunk_len);
                                 }
                                 ringbuf_pos += 1;
@@ -845,7 +845,9 @@ where
                         }
                     }
                     Err(err) => {
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -853,31 +855,28 @@ where
                 }
             }
         });
-        Upsampler { receiver, sender }
+        Upsampler {
+            receiver_connector,
+            sender_connector,
+        }
     }
 }
 
 /// Block performing a Fourier analysis
 pub struct Fourier<Flt> {
-    receiver: Receiver<Samples<Complex<Flt>>>,
-    sender: Sender<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Fourier<Flt>
-where
-    Flt: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
-        self.receiver.connector()
+impl<Flt> Consumer<Samples<Complex<Flt>>> for Fourier<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
     }
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for Fourier<Flt>
-where
-    Flt: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
-        self.sender.connector()
+impl<Flt> Producer<Samples<Complex<Flt>>> for Fourier<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
     }
 }
 
@@ -894,10 +893,8 @@ where
     where
         W: Window + Send + 'static,
     {
-        let receiver = Receiver::<Samples<Complex<Flt>>>::new();
-        let sender = Sender::<Samples<Complex<Flt>>>::new();
-        let mut input: ReceiverStream<Samples<Complex<Flt>>> = receiver.stream();
-        let output: Sender<Samples<Complex<Flt>>> = sender.clone();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
             let mut previous_chunk_len: Option<usize> = None;
@@ -905,7 +902,7 @@ where
             let mut scratch: Vec<f64> = Default::default();
             let mut window_values: Vec<Flt> = Default::default();
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(Samples {
                         sample_rate,
                         chunk: input_chunk,
@@ -936,15 +933,20 @@ where
                             output_chunk[idx] *= window_values[idx];
                         }
                         fft.as_ref().unwrap().process(&mut output_chunk);
-                        output
+                        if let Err(_) = sender
                             .send(Samples {
                                 sample_rate,
                                 chunk: output_chunk.finalize(),
                             })
-                            .await;
+                            .await
+                        {
+                            return;
+                        }
                     }
                     Err(err) => {
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -952,9 +954,13 @@ where
                 }
             }
         });
-        Self { receiver, sender }
+        Self {
+            receiver_connector,
+            sender_connector,
+        }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -964,23 +970,22 @@ mod tests {
         let mut buffer = buf_pool.get();
         buffer.extend_from_slice(&vec![0; 4096]);
         let buffer = buffer.finalize();
-        let sender = Sender::new();
+        let (sender, sender_connector) = new_sender();
         let rechunk = Rechunker::<u8>::new(1024);
-        let receiver = Receiver::new();
-        sender.connect_to_consumer(&rechunk);
-        rechunk.connect_to_consumer(&receiver);
-        let mut receiver_stream = receiver.stream();
+        let (mut receiver, receiver_connector) = new_receiver();
+        sender_connector.connect_to_consumer(&rechunk);
+        rechunk.connect_to_consumer(&receiver_connector);
         assert!(tokio::select!(
             _ = async move {
                 loop {
                     sender.send(Samples {
                         chunk: buffer.clone(),
                         sample_rate: 1.0,
-                    }).await;
+                    }).await.unwrap();
                 }
             } => false,
             _ = async move {
-                assert_eq!(receiver_stream.recv().await.unwrap().chunk.len(), 1024);
+                assert_eq!(receiver.recv().await.unwrap().chunk.len(), 1024);
             } => true,
         ));
     }

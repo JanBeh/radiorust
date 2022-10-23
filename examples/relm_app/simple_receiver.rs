@@ -63,7 +63,7 @@ impl SimpleSdr {
         });
         */
 
-        let buffer = Buffer::new(0.2, 0.0, 0.2, 0.3);
+        let buffer = blocks::Buffer::new(0.2, 0.0, 0.2, 0.3);
         buffer.connect_to_producer(&downsample2);
 
         let volume = blocks::Function::<Complex<f32>>::new();

@@ -3,7 +3,6 @@
 //! See [`Samples`].
 
 use crate::bufferpool::Chunk;
-use crate::flow::Temporal;
 
 /// A chunk of samples with a specified sample rate
 ///
@@ -21,6 +20,12 @@ pub struct Samples<T> {
     pub sample_rate: f64,
     /// Sample data
     pub chunk: Chunk<T>,
+}
+
+/// Data which corresponds to a duration
+pub trait Temporal {
+    /// Duration in seconds
+    fn duration(&self) -> f64;
 }
 
 impl<T> Temporal for Samples<T> {

@@ -107,26 +107,20 @@ struct FilterParams {
 /// [`Downsampler`]: crate::blocks::Downsampler
 /// [`Upsampler`]: crate::blocks::Upsampler
 pub struct Filter<Flt> {
-    receiver: Receiver<Samples<Complex<Flt>>>,
-    sender: Sender<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
     params: watch::Sender<FilterParams>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Filter<Flt>
-where
-    Flt: Clone,
-{
-    fn receiver_connector(&self) -> ReceiverConnector<Samples<Complex<Flt>>> {
-        self.receiver.connector()
+impl<Flt> Consumer<Samples<Complex<Flt>>> for Filter<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
     }
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for Filter<Flt>
-where
-    Flt: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
-        self.sender.connector()
+impl<Flt> Producer<Samples<Complex<Flt>>> for Filter<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
     }
 }
 
@@ -168,11 +162,9 @@ where
         freq_resp: Box<dyn FreqRespFunc + Send + Sync>,
         window: Box<dyn Window + Send + Sync>,
     ) -> Self {
-        let receiver = Receiver::<Samples<Complex<Flt>>>::new();
-        let sender = Sender::<Samples<Complex<Flt>>>::new();
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         let (params_send, mut params_recv) = watch::channel(FilterParams { freq_resp, window });
-        let mut input = receiver.stream();
-        let output = sender.clone();
         spawn(async move {
             let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
             let mut prev_sample_rate: Option<f64> = None;
@@ -182,7 +174,7 @@ where
             let mut ifft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut extended_response: Vec<Complex<Flt>> = Default::default();
             loop {
-                match input.recv().await {
+                match receiver.recv().await {
                     Ok(Samples {
                         sample_rate,
                         chunk: input_chunk,
@@ -252,18 +244,23 @@ where
                             }
                             ifft.as_ref().unwrap().process(&mut output_chunk);
                             output_chunk.truncate(n);
-                            output
+                            if let Err(_) = sender
                                 .send(Samples {
                                     sample_rate,
                                     chunk: output_chunk.finalize(),
                                 })
-                                .await;
+                                .await
+                            {
+                                return;
+                            }
                         }
                         previous_chunk = Some(input_chunk);
                     }
                     Err(err) => {
                         previous_chunk = None;
-                        output.forward_error(err).await;
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
                         if err == RecvError::Closed {
                             return;
                         }
@@ -272,8 +269,8 @@ where
             }
         });
         Self {
-            receiver,
-            sender,
+            receiver_connector,
+            sender_connector,
             params: params_send,
         }
     }

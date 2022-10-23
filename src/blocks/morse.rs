@@ -223,15 +223,12 @@ pub fn encode(text: &str) -> Option<Vec<Unit>> {
 
 /// Keyer block which generates morse signals
 pub struct Keyer<Flt> {
-    sender: Sender<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for Keyer<Flt>
-where
-    Flt: Clone,
-{
-    fn sender_connector(&self) -> SenderConnector<Samples<Complex<Flt>>> {
-        self.sender.connector()
+impl<Flt> Producer<Samples<Complex<Flt>>> for Keyer<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
     }
 }
 
@@ -253,8 +250,7 @@ where
             .chain(units.into_iter())
             .chain(iter::once(WordSpace));
         let mut unit_iter = unit_iter.chain(iter::repeat(Space)); // TODO: workaround
-        let sender = Sender::<Samples<Complex<Flt>>>::new();
-        let output = sender.clone();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         let mut is_on: bool = Default::default();
         let mut remaining_samples: usize = 0;
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
@@ -278,16 +274,21 @@ where
                 if output_chunk.is_empty() {
                     break;
                 }
-                output
+                if let Err(_) = sender
                     .send(Samples {
                         sample_rate,
                         chunk: output_chunk.finalize(),
                     })
-                    .await;
+                    .await
+                {
+                    return;
+                }
             }
-            output.finish().await;
+            if let Err(_) = sender.finish().await {
+                return;
+            }
         });
-        Some(Self { sender })
+        Some(Self { sender_connector })
     }
 }
 

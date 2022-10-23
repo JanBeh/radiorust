@@ -1,5 +1,11 @@
 //! Note: This example is very unclean yet and dependent on timing.
 
+#[tokio::main]
+async fn main() {
+    todo!()
+}
+
+/*
 use radiorust::flow::*;
 use radiorust::numbers::Complex;
 use radiorust::*;
@@ -34,3 +40,4 @@ async fn main() {
     tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
     sdr_tx.deactivate().await.unwrap();
 }
+*/

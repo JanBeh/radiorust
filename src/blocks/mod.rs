@@ -48,7 +48,7 @@ pub mod transform;
 pub mod prelude {
     pub use super::analysis::Fourier;
     pub use super::buffering::Buffer;
-    pub use super::chunks::{Rechunker, Overlapper};
+    pub use super::chunks::{Overlapper, Rechunker};
     pub use super::filters::Filter;
     pub use super::resampling::{Downsampler, Upsampler};
     pub use super::transform::{FreqShifter, Function};
@@ -56,7 +56,7 @@ pub mod prelude {
 
 pub use self::analysis::Fourier;
 pub use self::buffering::Buffer;
-pub use self::chunks::{Rechunker, Overlapper};
+pub use self::chunks::{Overlapper, Rechunker};
 pub use self::filters::Filter;
 pub use self::resampling::{Downsampler, Upsampler};
 pub use self::transform::{FreqShifter, Function};

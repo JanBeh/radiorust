@@ -1,7 +1,5 @@
-use crate::blocks;
-use crate::flow::*;
+use radiorust::prelude::*;
 
-use num::Complex;
 use soapysdr::Direction::Rx;
 
 pub struct SimpleSdr {

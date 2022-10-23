@@ -3,7 +3,6 @@ use gtk::prelude::*;
 use relm4::{gtk, send, AppUpdate, Model, RelmApp, Sender, WidgetPlus, Widgets};
 use tokio::runtime::Runtime;
 
-use radiorust::*;
 mod simple_receiver;
 use simple_receiver::*;
 

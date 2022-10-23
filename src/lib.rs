@@ -12,6 +12,7 @@ pub mod flow;
 pub mod math;
 pub mod metering;
 pub mod numbers;
+pub mod prelude;
 pub mod samples;
 pub mod sync;
 pub mod windowing;

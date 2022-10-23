@@ -1,10 +1,5 @@
-use radiorust::blocks;
-use radiorust::flow::*;
-use radiorust::metering;
-use radiorust::samples::*;
-use radiorust::windowing;
+use radiorust::prelude::*;
 
-use num::Complex;
 use soapysdr::Direction::Rx;
 
 use clap::Parser;
@@ -67,7 +62,7 @@ async fn main() {
     filter.connect_to_producer(&downsampler);
     let overlapper = blocks::Overlapper::new(quality);
     overlapper.connect_to_producer(&filter);
-    let fourier = blocks::Fourier::with_window(windowing::Kaiser::with_null_at_bin(quality as f64));
+    let fourier = blocks::Fourier::with_window(Kaiser::with_null_at_bin(quality as f64));
     fourier.connect_to_producer(&overlapper);
     let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
     receiver_connector.connect_to_producer(&fourier);

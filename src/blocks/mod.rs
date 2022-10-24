@@ -12,12 +12,16 @@
 //! zero. This allows using blocks which are implemented with a complex fourier
 //! transform.
 //!
-//! Blocks will usually [`spawn`] a [task], and thus require an active
-//! [`tokio::runtime::Runtime`].
-//!
 //! There is no data structure describing the graph of connected blocks.
 //! Instead, any [`Producer<T>`] can be connected with any [`Consumer<T>`], see
 //! [`Producer::connect_to_consumer`] or [`Consumer::connect_to_producer`].
+//!
+//! Blocks will usually [`spawn`] a [task], and thus require an active
+//! [`tokio::runtime::Runtime`] while being created. The spawned task will
+//! usually keep working even if a block gets dropped as long as there is a
+//! connected [`Producer`] and a connected [`Consumer`]. Thus creating circles
+//! must be avoided. [I/O blocks] are an exception to this rule: when they are
+//! dropped, they will stop working.
 //!
 //! [connected]: crate::flow
 //! [produce]: crate::flow::Producer
@@ -27,12 +31,13 @@
 //! [`sample_rate`]: crate::samples::Samples::sample_rate
 //! [`Complex<Flt>`]: crate.numbers::Complex
 //! [`Float`]: crate::numbers::Float
-//! [`spawn`]: tokio::task::spawn
-//! [task]: tokio::task
 //! [`Producer<T>`]: crate::flow::Producer
 //! [`Consumer<T>`]: crate::flow::Consumer
 //! [`Producer::connect_to_consumer`]: crate::flow::Producer::connect_to_consumer
 //! [`Consumer::connect_to_producer`]: crate::flow::Consumer::connect_to_producer
+//! [`spawn`]: tokio::task::spawn
+//! [task]: tokio::task
+//! [I/O blocks]: crate::blocks::io
 
 pub mod analysis;
 pub mod buffering;

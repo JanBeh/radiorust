@@ -7,7 +7,7 @@ use crate::samples::*;
 
 use tokio::select;
 use tokio::sync::watch;
-use tokio::task::{spawn, JoinHandle};
+use tokio::task::{spawn, JoinError, JoinHandle};
 
 use std::fs::File;
 use std::future::{ready, Future};
@@ -195,6 +195,7 @@ pub enum ContinuousClosureSinkError<E> {
 }
 
 enum ContinuousClosureSinkStatus<E> {
+    Aborted,
     RecvError(RecvError),
     Report(E),
 }
@@ -206,6 +207,7 @@ enum ContinuousClosureSinkStatus<E> {
 /// callback.
 pub struct ContinuousClosureSink<T, E> {
     receiver_connector: ReceiverConnector<T>,
+    abort: watch::Sender<()>,
     join_handle: JoinHandle<ContinuousClosureSinkStatus<E>>,
 }
 
@@ -241,46 +243,63 @@ where
         R: Future<Output = Result<(), E>> + Send,
     {
         let (mut receiver, receiver_connector) = new_receiver::<T>();
+        let (abort_send, mut abort_recv) = watch::channel::<()>(());
         let join_handle = spawn(async move {
             loop {
-                match receiver.recv().await {
-                    Ok(data) => match process(data).await {
-                        Ok(()) => (),
-                        Err(err) => return ContinuousClosureSinkStatus::Report(err),
-                    },
-                    Err(err) => return ContinuousClosureSinkStatus::RecvError(err),
+                select! {
+                    _ = abort_recv.changed() => return ContinuousClosureSinkStatus::Aborted,
+                    result = receiver.recv() => {
+                        match result {
+                            Ok(data) => match process(data).await {
+                                Ok(()) => (),
+                                Err(err) => return ContinuousClosureSinkStatus::Report(err),
+                            },
+                            Err(err) => return ContinuousClosureSinkStatus::RecvError(err),
+                        }
+                    }
                 }
             }
         });
         Self {
             receiver_connector,
+            abort: abort_send,
             join_handle,
         }
     }
-    /// Wait for stream to finish
-    pub async fn wait(self) -> Result<(), ContinuousClosureSinkError<E>> {
-        match self.join_handle.await {
-            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
-            Ok(ContinuousClosureSinkStatus::RecvError(_)) => Err(ContinuousClosureSinkError::Reset),
+    fn map_status(
+        status: Result<ContinuousClosureSinkStatus<E>, JoinError>,
+    ) -> Result<bool, ContinuousClosureSinkError<E>> {
+        match status {
+            Ok(ContinuousClosureSinkStatus::Aborted) => Ok(false),
+            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Closed)) => Ok(false),
+            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(true),
+            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Reset)) => {
+                Err(ContinuousClosureSinkError::Reset)
+            }
             Ok(ContinuousClosureSinkStatus::Report(err)) => {
                 Err(ContinuousClosureSinkError::Report(err))
             }
             Err(_) => panic!("task panicked"),
         }
     }
-    /// Stop operation
-    pub async fn stop(self) -> Result<(), ContinuousClosureSinkError<E>> {
-        self.receiver_connector.disconnect();
+    /// Wait for stream to finish
+    ///
+    /// Returns `Ok(true)` if connected [`Producer`] indicated completion
+    /// through [`Sender::finish`] ([`RecvError::Finished`]).
+    /// Returns `Ok(false)` if operation could not complete because no
+    /// `Producer` is connected.
+    pub async fn wait(self) -> Result<bool, ContinuousClosureSinkError<E>> {
         drop(self.receiver_connector);
-        match self.join_handle.await {
-            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Closed)) => Ok(()),
-            Ok(ContinuousClosureSinkStatus::RecvError(RecvError::Finished)) => Ok(()),
-            Ok(ContinuousClosureSinkStatus::RecvError(_)) => Err(ContinuousClosureSinkError::Reset),
-            Ok(ContinuousClosureSinkStatus::Report(err)) => {
-                Err(ContinuousClosureSinkError::Report(err))
-            }
-            Err(_) => panic!("task panicked"),
-        }
+        Self::map_status(self.join_handle.await)
+    }
+    /// Stop operation
+    ///
+    /// Returns `Ok(true)` if connected [`Producer`] indicated completion
+    /// through [`Sender::finish`] ([`RecvError::Finished`]).
+    /// Returns `Ok(false)` if operation was stopped before.
+    pub async fn stop(self) -> Result<bool, ContinuousClosureSinkError<E>> {
+        drop(self.abort);
+        Self::map_status(self.join_handle.await)
     }
 }
 
@@ -335,11 +354,20 @@ impl ContinuousF32BeWriter {
         }
     }
     /// Wait for stream to finish
-    pub async fn wait(self) -> Result<(), ContinuousWriterError> {
+    ///
+    /// Returns `Ok(true)` if connected [`Producer`] indicated completion
+    /// through [`Sender::finish`] ([`RecvError::Finished`]).
+    /// Returns `Ok(false)` if operation could not complete because no
+    /// `Producer` is connected.
+    pub async fn wait(self) -> Result<bool, ContinuousWriterError> {
         self.inner.wait().await.map_err(Self::map_err)
     }
     /// Stop operation
-    pub async fn stop(self) -> Result<(), ContinuousWriterError> {
+    ///
+    /// Returns `Ok(true)` if connected [`Producer`] indicated completion
+    /// through [`Sender::finish`] ([`RecvError::Finished`]).
+    /// Returns `Ok(false)` if operation was stopped before.
+    pub async fn stop(self) -> Result<bool, ContinuousWriterError> {
         self.inner.stop().await.map_err(Self::map_err)
     }
 }

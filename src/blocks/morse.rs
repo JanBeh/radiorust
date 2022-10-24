@@ -88,6 +88,8 @@ pub enum Unit {
     CharSpace,
     /// Space between words (usually as long as seven dits)
     WordSpace,
+    /// Padding at beginning and end of a message (half a `WordSpace`)
+    Padding,
 }
 
 use Unit::*;
@@ -101,6 +103,7 @@ impl Unit {
             Space => false,
             CharSpace => false,
             WordSpace => false,
+            Padding => false,
         }
     }
     /// Relative duration of given `Unit`, where a [`Dit`] is equivalent to
@@ -112,6 +115,7 @@ impl Unit {
             Space => 1.0,
             CharSpace => 3.0,
             WordSpace => 7.0,
+            Padding => 3.5,
         }
     }
     /// Length of `Unit` in samples for given [`Speed`]
@@ -126,6 +130,7 @@ impl Unit {
 pub fn encode(text: &str) -> Option<Vec<Unit>> {
     use Space as Sp;
     let mut output: Vec<Unit> = Vec::new();
+    output.push(Padding);
     let mut prosign = false;
     let mut previous_char: bool = false;
     for c in text.chars().map(|c| c.to_uppercase()).flatten() {
@@ -218,6 +223,7 @@ pub fn encode(text: &str) -> Option<Vec<Unit>> {
             }
         }
     }
+    output.push(Padding);
     Some(output)
 }
 
@@ -330,8 +336,8 @@ mod tests {
         assert_eq!(
             encode("AB C").as_ref().unwrap(),
             &[
-                Dit, Sp, Dah, CharSpace, Dah, Sp, Dit, Sp, Dit, Sp, Dit, WordSpace, Dah, Sp, Dit,
-                Sp, Dah, Sp, Dit,
+                Padding, Dit, Sp, Dah, CharSpace, Dah, Sp, Dit, Sp, Dit, Sp, Dit, WordSpace, Dah,
+                Sp, Dit, Sp, Dah, Sp, Dit, Padding,
             ]
         );
     }
@@ -341,9 +347,10 @@ mod tests {
         assert_eq!(
             encode("<TTTTTT>V <CT> X<AR>").as_ref().unwrap(),
             &[
-                Dah, Sp, Dah, Sp, Dah, Sp, Dah, Sp, Dah, Sp, Dah, CharSpace, Dit, Sp, Dit, Sp, Dit,
-                Sp, Dah, WordSpace, Dah, Sp, Dit, Sp, Dah, Sp, Dit, Sp, Dah, WordSpace, Dah, Sp,
-                Dit, Sp, Dit, Sp, Dah, CharSpace, Dit, Sp, Dah, Sp, Dit, Sp, Dah, Sp, Dit,
+                Padding, Dah, Sp, Dah, Sp, Dah, Sp, Dah, Sp, Dah, Sp, Dah, CharSpace, Dit, Sp, Dit,
+                Sp, Dit, Sp, Dah, WordSpace, Dah, Sp, Dit, Sp, Dah, Sp, Dit, Sp, Dah, WordSpace,
+                Dah, Sp, Dit, Sp, Dit, Sp, Dah, CharSpace, Dit, Sp, Dah, Sp, Dit, Sp, Dah, Sp, Dit,
+                Padding,
             ]
         );
     }

@@ -404,4 +404,16 @@ mod tests {
         assert_eq!(receiver.recv().await, Err(RecvError::Closed));
         assert_eq!(receiver.recv().await, Err(RecvError::Closed));
     }
+    #[tokio::test]
+    async fn test_continuous_closure_sink_wait() {
+        let sink = ContinuousClosureSink::<(), ()>::new(|_| panic!());
+        let source = ClosureSource::<(), ()>::new_async(|| std::future::pending());
+        sink.connect_to_producer(&source);
+        select! {
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => (),
+            _ = sink.wait() => panic!(),
+        }
+        let sink = ContinuousClosureSink::<(), ()>::new(|_| panic!());
+        assert_eq!(sink.wait().await.unwrap(), false)
+    }
 }

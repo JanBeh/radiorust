@@ -121,6 +121,10 @@ impl Producer<Samples<Complex<f32>>> for F32BeReader {
 
 impl F32BeReader {
     /// Create `F32BeReader`, which reads samples from the given `writer`
+    ///
+    /// The produced [`Chunk`]s always have a length of `chunk_len`. If the
+    /// `reader` reports EOF in the middle of a chunk or in the middle of a
+    /// floating point value, then the partial chunk is silently discarded.
     pub fn new<R>(chunk_len: usize, sample_rate: f64, mut reader: R) -> Self
     where
         R: Read + Send + 'static,

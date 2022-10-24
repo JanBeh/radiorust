@@ -104,9 +104,7 @@ impl Widgets<AppModel, ()> for AppWidgets {
 fn main() {
     let args = Args::parse();
     let rt = Runtime::new().unwrap();
-    let enter = rt.enter();
-    let simple_sdr = SimpleSdr::new(1e6 * args.frequency);
-    drop(enter);
+    let simple_sdr = rt.block_on(SimpleSdr::new(1e6 * args.frequency));
     let model = AppModel {
         _rt: rt,
         simple_sdr,

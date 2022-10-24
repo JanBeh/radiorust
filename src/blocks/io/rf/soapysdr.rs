@@ -4,15 +4,12 @@ use crate::bufferpool::*;
 use crate::flow::*;
 use crate::numbers::*;
 use crate::samples::*;
-use crate::sync::keepalive;
 
-use tokio::{
-    runtime,
-    task::{spawn_blocking, JoinHandle},
-};
+use tokio::runtime;
+use tokio::sync::{watch, Mutex};
+use tokio::task::{spawn_blocking, JoinHandle};
 
 use std::mem::take;
-use std::sync::Mutex;
 
 struct SoapySdrRxRetval {
     rx_stream: soapysdr::RxStream<Complex<f32>>,
@@ -20,7 +17,7 @@ struct SoapySdrRxRetval {
 }
 
 struct SoapySdrRxActive {
-    keepalive_send: keepalive::Sender,
+    abort: watch::Sender<()>,
     join_handle: JoinHandle<SoapySdrRxRetval>,
 }
 
@@ -68,8 +65,8 @@ impl SoapySdrRx {
         }
     }
     /// Activate streaming
-    pub fn activate(&mut self) -> Result<(), soapysdr::Error> {
-        let mut state_guard = self.state.lock().unwrap();
+    pub async fn activate(&mut self) -> Result<(), soapysdr::Error> {
+        let mut state_guard = self.state.lock().await;
         match take(&mut *state_guard) {
             SoapySdrRxState::Invalid => panic!("invalid state in SoapySdrRx"),
             SoapySdrRxState::Active(x) => {
@@ -77,29 +74,36 @@ impl SoapySdrRx {
                 Ok(())
             }
             SoapySdrRxState::Idle(mut rx_stream) => {
-                let mtu = match (|| {
-                    let mtu = rx_stream.mtu()?;
-                    rx_stream.activate(None)?;
-                    Ok::<_, soapysdr::Error>(mtu)
-                })() {
+                let (mut rx_stream, mtu) = match spawn_blocking(move || {
+                    let mtu = match rx_stream.mtu() {
+                        Ok(x) => x,
+                        Err(err) => return Err((rx_stream, err)),
+                    };
+                    match rx_stream.activate(None) {
+                        Ok(x) => x,
+                        Err(err) => return Err((rx_stream, err)),
+                    };
+                    Ok((rx_stream, mtu))
+                })
+                .await
+                .unwrap()
+                {
                     Ok(x) => x,
-                    Err(err) => {
+                    Err((rx_stream, err)) => {
                         *state_guard = SoapySdrRxState::Idle(rx_stream);
                         return Err(err);
                     }
                 };
                 let sample_rate = self.sample_rate;
                 let sender = self.sender.clone();
-                let (keepalive_send, keepalive_recv) = keepalive::channel();
+                let (abort_send, abort_recv) = watch::channel::<()>(());
                 let join_handle = spawn_blocking(move || {
                     let rt = runtime::Handle::current();
                     let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
                     let mut result = Ok(());
-                    while keepalive_recv.is_alive() {
+                    while !abort_recv.has_changed().unwrap_or(true) {
                         let mut buffer = buf_pool.get();
                         buffer.resize_with(mtu, Default::default);
-                        // TODO: The following method call may hang even when
-                        // `keepalive_recv.is_alive()` becomes false.
                         let count = match rx_stream.read(&[&mut buffer], 1000000) {
                             Ok(x) => x,
                             Err(err) => {
@@ -108,20 +112,22 @@ impl SoapySdrRx {
                             }
                         };
                         buffer.truncate(count);
-                        rt.block_on(async {
-                            sender
-                                .send(Samples {
-                                    sample_rate,
-                                    chunk: buffer.finalize(),
-                                })
-                                .await
-                                .ok()
-                        }); // TODO: error handling
+                        if let Err(_) = rt.block_on(sender.send(Samples {
+                            sample_rate,
+                            chunk: buffer.finalize(),
+                        })) {
+                            break;
+                        }
+                    }
+                    if let Err(err) = rx_stream.deactivate(None) {
+                        if result.is_ok() {
+                            result = Err(err);
+                        }
                     }
                     SoapySdrRxRetval { rx_stream, result }
                 });
                 *state_guard = SoapySdrRxState::Active(SoapySdrRxActive {
-                    keepalive_send,
+                    abort: abort_send,
                     join_handle,
                 });
                 Ok(())
@@ -129,21 +135,17 @@ impl SoapySdrRx {
         }
     }
     /// Deactivate (pause) streaming
-    pub fn deactivate(&mut self) -> Result<(), soapysdr::Error> {
-        let mut state_guard = self.state.lock().unwrap();
+    pub async fn deactivate(&mut self) -> Result<(), soapysdr::Error> {
+        let mut state_guard = self.state.lock().await;
         match take(&mut *state_guard) {
             SoapySdrRxState::Invalid => panic!("invalid state in SoapySdrRx"),
             SoapySdrRxState::Idle(x) => {
                 *state_guard = SoapySdrRxState::Idle(x);
                 Ok(())
             }
-            SoapySdrRxState::Active(SoapySdrRxActive {
-                keepalive_send,
-                join_handle,
-            }) => {
-                drop(keepalive_send);
-                let rt = runtime::Handle::current();
-                let retval = rt.block_on(join_handle).unwrap();
+            SoapySdrRxState::Active(SoapySdrRxActive { abort, join_handle }) => {
+                drop(abort);
+                let retval = join_handle.await.unwrap();
                 *state_guard = SoapySdrRxState::Idle(retval.rx_stream);
                 retval.result
             }

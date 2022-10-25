@@ -207,16 +207,16 @@ where
                             for i in 0..(n / 2) {
                                 response.swap(i, i + n / 2);
                             }
-                            let mut energy_pre = Complex::<f64>::from(0.0);
-                            let mut energy_post = Complex::<f64>::from(0.0);
+                            let mut energy_pre: f64 = 0.0;
+                            let mut energy_post: f64 = 0.0;
                             for i in 0..n {
-                                energy_pre += response[i] * response[i];
+                                energy_pre += response[i].norm_sqr();
                                 response[i] *= Complex::from(
                                     params
                                         .window
                                         .relative_value_at(2.0 * (i as f64 + 0.5) / n_flt - 1.0),
                                 );
-                                energy_post += response[i] * response[i];
+                                energy_post += response[i].norm_sqr();
                             }
                             drop(params);
                             let scale = (energy_pre / energy_post).sqrt();

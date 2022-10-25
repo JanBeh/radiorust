@@ -7,9 +7,8 @@ use crate::flow::*;
 use crate::numbers::*;
 use crate::samples::*;
 
+use tokio::sync::mpsc;
 use tokio::task::spawn;
-
-use std::iter;
 
 /// Morse speed
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -230,6 +229,7 @@ pub fn encode(text: &str) -> Option<Vec<Unit>> {
 /// Keyer block which generates morse signals
 pub struct Keyer<Flt> {
     sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    messages: mpsc::UnboundedSender<Vec<Unit>>,
 }
 
 impl<Flt> Producer<Samples<Complex<Flt>>> for Keyer<Flt> {
@@ -244,57 +244,92 @@ where
 {
     /// Generate new `Keyer` block
     ///
-    /// **Note:** Currently the created `Keyer` block sends a message once and
-    /// then sends silence. This behavior and this interface is expected to
-    /// change in future versions.
-    pub fn new(chunk_len: usize, sample_rate: f64, speed: Speed, text: &str) -> Option<Self> {
-        let units = match encode(text) {
-            Some(units) => units,
-            None => return None,
-        };
-        let unit_iter = iter::once(WordSpace)
-            .chain(units.into_iter())
-            .chain(iter::once(WordSpace));
-        let mut unit_iter = unit_iter.chain(iter::repeat(Space)); // TODO: workaround
+    /// If not dropped, the keyer will send silence unless a message has been
+    /// queued using [`Keyer::send`]. On drop, message queue is emptied before
+    /// sending is stopped.
+    pub fn new(chunk_len: usize, sample_rate: f64, speed: Speed) -> Option<Self> {
         let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
-        let mut is_on: bool = Default::default();
-        let mut remaining_samples: usize = 0;
-        let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
+        let (messages_send, mut messages_recv) = mpsc::unbounded_channel::<Vec<Unit>>();
         spawn(async move {
+            let mut is_on: bool = Default::default();
+            let mut remaining_samples: usize = 0;
+            let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
+            let mut empty_chunk_buf = buf_pool.get_with_capacity(chunk_len);
+            for _ in 0..chunk_len {
+                empty_chunk_buf.push(Complex::from(Flt::zero()));
+            }
+            let empty_chunk = empty_chunk_buf.finalize();
             loop {
-                let mut output_chunk = buf_pool.get_with_capacity(chunk_len);
-                while output_chunk.len() < chunk_len {
-                    if remaining_samples == 0 {
-                        match unit_iter.next() {
-                            None => break,
-                            Some(unit) => {
-                                remaining_samples =
-                                    unit.samples(sample_rate, speed).round() as usize; // TODO
-                                is_on = unit.on();
+                match messages_recv.try_recv() {
+                    Ok(units) => {
+                        let mut unit_iter = units.into_iter();
+                        loop {
+                            let mut output_chunk = buf_pool.get_with_capacity(chunk_len);
+                            while output_chunk.len() < chunk_len {
+                                if remaining_samples == 0 {
+                                    match unit_iter.next() {
+                                        None => break,
+                                        Some(unit) => {
+                                            remaining_samples =
+                                                unit.samples(sample_rate, speed).round() as usize;
+                                            is_on = unit.on();
+                                        }
+                                    }
+                                }
+                                output_chunk.push(Complex::from(if is_on {
+                                    Flt::one()
+                                } else {
+                                    Flt::zero()
+                                }));
+                                remaining_samples -= 1;
+                            }
+                            if output_chunk.is_empty() {
+                                break;
+                            }
+                            while output_chunk.len() < chunk_len {
+                                output_chunk.push(Complex::from(Flt::zero()));
+                            }
+                            if let Err(_) = sender
+                                .send(Samples {
+                                    sample_rate,
+                                    chunk: output_chunk.finalize(),
+                                })
+                                .await
+                            {
+                                return;
                             }
                         }
+                        if let Err(_) = sender.finish().await {
+                            return;
+                        }
                     }
-                    output_chunk.push(Complex::from(if is_on { Flt::one() } else { Flt::zero() }));
-                    remaining_samples -= 1;
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        if let Err(_) = sender
+                            .send(Samples {
+                                sample_rate,
+                                chunk: empty_chunk.clone(),
+                            })
+                            .await
+                        {
+                            return;
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => return,
                 }
-                if output_chunk.is_empty() {
-                    break;
-                }
-                if let Err(_) = sender
-                    .send(Samples {
-                        sample_rate,
-                        chunk: output_chunk.finalize(),
-                    })
-                    .await
-                {
-                    return;
-                }
-            }
-            if let Err(_) = sender.finish().await {
-                return;
             }
         });
-        Some(Self { sender_connector })
+        Some(Self {
+            sender_connector,
+            messages: messages_send,
+        })
+    }
+    /// Send text as morse code
+    pub fn send(&self, text: &str) -> Result<(), ()> {
+        match encode(text) {
+            Some(units) => self.messages.send(units).ok(),
+            None => return Err(()),
+        };
+        Ok(())
     }
 }
 

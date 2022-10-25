@@ -247,7 +247,7 @@ where
     /// If not dropped, the keyer will send silence unless a message has been
     /// queued using [`Keyer::send`]. On drop, message queue is emptied before
     /// sending is stopped.
-    pub fn new(chunk_len: usize, sample_rate: f64, speed: Speed) -> Option<Self> {
+    pub fn new(chunk_len: usize, sample_rate: f64, speed: Speed) -> Self {
         let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
         let (messages_send, mut messages_recv) = mpsc::unbounded_channel::<Vec<Unit>>();
         spawn(async move {
@@ -318,10 +318,10 @@ where
                 }
             }
         });
-        Some(Self {
+        Self {
             sender_connector,
             messages: messages_send,
-        })
+        }
     }
     /// Send text as morse code
     pub fn send(&self, text: &str) -> Result<(), ()> {

@@ -26,6 +26,7 @@ parking_lot = "0.12.1"
 relm4 = { version = "0.4.4" }
 relm4-macros = { version = "0.4.4" }
 clap = { version = "4.0.17", features = ["derive"] }
+rustyline = "10.0.0"
 
 [[example]]
 name = "relm_app"
@@ -33,7 +34,7 @@ required-features = ["cpal", "soapysdr"]
 
 [[example]]
 name = "morse"
-required-features = ["soapysdr"]
+required-features = ["cpal"]
 
 [[example]]
 name = "bandwidth_meter"

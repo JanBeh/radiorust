@@ -2,8 +2,13 @@ use radiorust::prelude::*;
 
 #[tokio::main]
 async fn main() {
-    let keyer =
-        blocks::morse::Keyer::with_message(4096, 48000.0, blocks::morse::Speed::from_paris_wpm(16.0), "VVV").unwrap();
+    let keyer = blocks::morse::Keyer::with_message(
+        4096,
+        48000.0,
+        blocks::morse::Speed::from_paris_wpm(16.0),
+        "VVV",
+    )
+    .unwrap();
     let limiter = blocks::filters::SlewRateLimiter::new(100.0);
     limiter.connect_to_producer(&keyer);
     let filter = blocks::Filter::new(|_, freq| {
@@ -28,9 +33,21 @@ async fn main() {
     */
     let mut rl = rustyline::Editor::<()>::new().unwrap();
     loop {
-        let line = rl.readline("Enter morse message> ").unwrap();
-        if keyer.send(&line).is_err() {
-            println!("Invalid character!");
+        match rl.readline("Enter morse message> ") {
+            Ok(line) => {
+                let line = line.trim();
+                if line.is_empty() {
+                    println!("Empty message, exiting.");
+                    break;
+                }
+                if keyer.send(&line).is_err() {
+                    println!("Invalid character!");
+                }
+            }
+            Err(err) => {
+                println!("Error: {err}");
+                break;
+            }
         }
     }
 }

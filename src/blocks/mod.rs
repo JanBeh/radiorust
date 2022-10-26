@@ -59,12 +59,7 @@ pub mod prelude {
     pub use super::transform::{FreqShifter, Function};
 }
 
-pub use self::analysis::Fourier;
-pub use self::buffering::Buffer;
-pub use self::chunks::{Overlapper, Rechunker};
-pub use self::filters::Filter;
-pub use self::resampling::{Downsampler, Upsampler};
-pub use self::transform::{FreqShifter, Function};
+pub use self::prelude::*;
 
 use crate::flow::*;
 

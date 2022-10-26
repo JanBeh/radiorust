@@ -3,7 +3,7 @@ use radiorust::prelude::*;
 #[tokio::main]
 async fn main() {
     let keyer =
-        blocks::morse::Keyer::new(4096, 48000.0, blocks::morse::Speed::from_paris_wpm(16.0));
+        blocks::morse::Keyer::with_message(4096, 48000.0, blocks::morse::Speed::from_paris_wpm(16.0), "VVV").unwrap();
     let limiter = blocks::filters::SlewRateLimiter::new(100.0);
     limiter.connect_to_producer(&keyer);
     let filter = blocks::Filter::new(|_, freq| {
@@ -20,6 +20,12 @@ async fn main() {
     audio_mod.connect_to_producer(&volume);
     let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, 2 * 4096);
     playback.connect_to_producer(&audio_mod);
+    /*
+    let writer = blocks::io::raw::ContinuousF32BeWriter::new(std::io::BufWriter::new(
+        std::fs::File::create("output.raw").unwrap(),
+    ));
+    writer.connect_to_producer(&audio_mod);
+    */
     let mut rl = rustyline::Editor::<()>::new().unwrap();
     loop {
         let line = rl.readline("Enter morse message> ").unwrap();

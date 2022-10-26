@@ -7,8 +7,12 @@ use crate::flow::*;
 use crate::numbers::*;
 use crate::samples::*;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
+
+use std::borrow::Cow;
+use std::error::Error;
+use std::fmt;
 
 /// Morse speed
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -123,10 +127,22 @@ impl Unit {
     }
 }
 
+/// Error when text cannot be converted to morse code
+#[derive(Debug)]
+pub struct EncodeError(Cow<'static, str>);
+
+impl fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&*self.0)
+    }
+}
+
+impl Error for EncodeError {}
+
 /// Encodes a text as sequence of [`Unit`]s
 ///
 /// Returns `None` on invalid or unexpected input.
-pub fn encode(text: &str) -> Option<Vec<Unit>> {
+pub fn encode(text: &str) -> Result<Vec<Unit>, EncodeError> {
     use Space as Sp;
     let mut output: Vec<Unit> = Vec::new();
     output.push(Padding);
@@ -136,7 +152,7 @@ pub fn encode(text: &str) -> Option<Vec<Unit>> {
         match c {
             '<' => {
                 if prosign {
-                    return None;
+                    return Err(EncodeError(Cow::Borrowed("double opening bracket")));
                 }
                 if previous_char {
                     previous_char = false;
@@ -146,13 +162,13 @@ pub fn encode(text: &str) -> Option<Vec<Unit>> {
             }
             '>' => {
                 if !prosign || !previous_char {
-                    return None;
+                    return Err(EncodeError(Cow::Borrowed("unexpected closing bracket")));
                 }
                 prosign = false;
             }
             ' ' => {
                 if prosign {
-                    return None;
+                    return Err(EncodeError(Cow::Borrowed("space in prosign")));
                 }
                 previous_char = false;
                 output.push(WordSpace);
@@ -217,18 +233,32 @@ pub fn encode(text: &str) -> Option<Vec<Unit>> {
                     '_' => &[Dit, Sp, Dit, Sp, Dah, Sp, Dah, Sp, Dit, Sp, Dah],
                     '$' => &[Dit, Sp, Dit, Sp, Dit, Sp, Dah, Sp, Dit, Sp, Dit, Sp, Dah],
                     '@' => &[Dit, Sp, Dah, Sp, Dah, Sp, Dit, Sp, Dah, Sp, Dit],
-                    _ => return None,
+                    _ => {
+                        return Err(EncodeError(match c {
+                            c if !c.is_ascii() => Cow::Borrowed("unsupported non-ASCII character"),
+                            c if c.is_ascii_control() => {
+                                Cow::Borrowed("unsupporded ASCII control character")
+                            }
+                            _ => Cow::Owned(format!("unsupported character \"{c}\"")),
+                        }));
+                    }
                 });
             }
         }
     }
     output.push(Padding);
-    Some(output)
+    Ok(output)
 }
 
 /// Keyer block which generates morse signals
+///
+/// If not dropped, the keyer will send silence unless a message has been
+/// queued using [`Keyer::send`]. On drop, message queue is emptied before
+/// sending is stopped. After all messages have been completed, an end of
+/// stream is indicated through [`Sender::finish`] ([`RecvError::Finished`]).
 pub struct Keyer<Flt> {
     sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    speed: watch::Sender<Speed>,
     messages: mpsc::UnboundedSender<Vec<Unit>>,
 }
 
@@ -242,15 +272,44 @@ impl<Flt> Keyer<Flt>
 where
     Flt: Float,
 {
-    /// Generate new `Keyer` block
+    /// Generate new `Keyer` block without initial message
     ///
-    /// If not dropped, the keyer will send silence unless a message has been
-    /// queued using [`Keyer::send`]. On drop, message queue is emptied before
-    /// sending is stopped.
+    /// The block will indicate an end of stream through [`Sender::finish`]
+    /// ([`RecvError::Finished`]) before sending silence to avoid endless
+    /// consumption of silence by certain [I/O blocks].
+    ///
+    /// [I/O blocks]: crate::blocks::io
     pub fn new(chunk_len: usize, sample_rate: f64, speed: Speed) -> Self {
+        Self::new_internal(chunk_len, sample_rate, speed, None)
+    }
+    /// Generate new `Keyer` block with initial message
+    pub fn with_message(
+        chunk_len: usize,
+        sample_rate: f64,
+        speed: Speed,
+        message: &str,
+    ) -> Result<Self, EncodeError> {
+        Ok(Self::new_internal(
+            chunk_len,
+            sample_rate,
+            speed,
+            Some(encode(message)?),
+        ))
+    }
+    fn new_internal(
+        chunk_len: usize,
+        sample_rate: f64,
+        speed: Speed,
+        message: Option<Vec<Unit>>,
+    ) -> Self {
         let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (speed_send, mut speed_recv) = watch::channel(speed);
         let (messages_send, mut messages_recv) = mpsc::unbounded_channel::<Vec<Unit>>();
+        if let Some(message) = message {
+            messages_send.send(message).unwrap();
+        }
         spawn(async move {
+            let mut speed = speed;
             let mut is_on: bool = Default::default();
             let mut remaining_samples: usize = 0;
             let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
@@ -259,33 +318,49 @@ where
                 empty_chunk_buf.push(Complex::from(Flt::zero()));
             }
             let empty_chunk = empty_chunk_buf.finalize();
+            let mut idle = false;
+            let mut output_chunk = buf_pool.get_with_capacity(chunk_len);
             loop {
                 match messages_recv.try_recv() {
                     Ok(units) => {
+                        idle = false;
                         let mut unit_iter = units.into_iter();
                         loop {
-                            let mut output_chunk = buf_pool.get_with_capacity(chunk_len);
-                            while output_chunk.len() < chunk_len {
-                                if remaining_samples == 0 {
-                                    match unit_iter.next() {
-                                        None => break,
-                                        Some(unit) => {
-                                            remaining_samples =
-                                                unit.samples(sample_rate, speed).round() as usize;
-                                            is_on = unit.on();
+                            if remaining_samples == 0 {
+                                match unit_iter.next() {
+                                    None => break,
+                                    Some(unit) => {
+                                        if speed_recv.has_changed().unwrap_or(false) {
+                                            speed = speed_recv.borrow_and_update().clone();
                                         }
+                                        remaining_samples =
+                                            unit.samples(sample_rate, speed).round() as usize;
+                                        is_on = unit.on();
                                     }
                                 }
-                                output_chunk.push(Complex::from(if is_on {
-                                    Flt::one()
-                                } else {
-                                    Flt::zero()
-                                }));
-                                remaining_samples -= 1;
                             }
-                            if output_chunk.is_empty() {
-                                break;
+                            output_chunk.push(Complex::from(if is_on {
+                                Flt::one()
+                            } else {
+                                Flt::zero()
+                            }));
+                            if output_chunk.len() >= chunk_len {
+                                if let Err(_) = sender
+                                    .send(Samples {
+                                        sample_rate,
+                                        chunk: output_chunk.finalize(),
+                                    })
+                                    .await
+                                {
+                                    return;
+                                }
+                                output_chunk = buf_pool.get_with_capacity(chunk_len);
                             }
+                            remaining_samples -= 1;
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        if !output_chunk.is_empty() {
                             while output_chunk.len() < chunk_len {
                                 output_chunk.push(Complex::from(Flt::zero()));
                             }
@@ -298,20 +373,23 @@ where
                             {
                                 return;
                             }
+                            output_chunk = buf_pool.get_with_capacity(chunk_len);
                         }
-                        if let Err(_) = sender.finish().await {
-                            return;
-                        }
-                    }
-                    Err(mpsc::error::TryRecvError::Empty) => {
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate,
-                                chunk: empty_chunk.clone(),
-                            })
-                            .await
-                        {
-                            return;
+                        if idle {
+                            if let Err(_) = sender
+                                .send(Samples {
+                                    sample_rate,
+                                    chunk: empty_chunk.clone(),
+                                })
+                                .await
+                            {
+                                return;
+                            }
+                        } else {
+                            if let Err(_) = sender.finish().await {
+                                return;
+                            }
+                            idle = true;
                         }
                     }
                     Err(mpsc::error::TryRecvError::Disconnected) => return,
@@ -320,16 +398,18 @@ where
         });
         Self {
             sender_connector,
+            speed: speed_send,
             messages: messages_send,
         }
     }
     /// Send text as morse code
-    pub fn send(&self, text: &str) -> Result<(), ()> {
-        match encode(text) {
-            Some(units) => self.messages.send(units).ok(),
-            None => return Err(()),
-        };
+    pub fn send(&self, text: &str) -> Result<(), EncodeError> {
+        self.messages.send(encode(text)?).unwrap();
         Ok(())
+    }
+    /// Set morse speed
+    pub fn set_speed(&self, speed: Speed) {
+        self.speed.send_replace(speed);
     }
 }
 

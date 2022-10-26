@@ -27,7 +27,8 @@ pub enum RecvError {
     /// more/new data may be received in the future.
     Reset,
     /// The data stream has been completed; more/new data may be received in
-    /// the future.
+    /// the future. This error is also used by blocks which have no data to
+    /// send yet, prior to sending silence.
     Finished,
     /// No more data can be received and the [`ReceiverConnector`] has been
     /// dropped.

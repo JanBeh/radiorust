@@ -296,5 +296,96 @@ where
     }
 }
 
+/// Block which limits the slew rate of I/Q values
+///
+/// The `slew_rate` passed to the [`new`] function or [`set_slew_rate`] method
+/// is the norm of the difference between samples one second apart.
+///
+/// [`new`]: SlewRateLimiter::new
+/// [`set_slew_rate`]: SlewRateLimiter::set_slew_rate
+pub struct SlewRateLimiter<Flt> {
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    slew_rate: watch::Sender<f64>,
+}
+
+impl<Flt> Consumer<Samples<Complex<Flt>>> for SlewRateLimiter<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
+    }
+}
+
+impl<Flt> Producer<Samples<Complex<Flt>>> for SlewRateLimiter<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
+    }
+}
+
+impl<Flt> SlewRateLimiter<Flt>
+where
+    Flt: Float,
+{
+    /// Create new `SlewRateLimiter` block
+    pub fn new(slew_rate: f64) -> Self {
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (slew_rate_send, mut slew_rate_recv) = watch::channel(slew_rate);
+        spawn(async move {
+            let mut slew_rate = slew_rate;
+            let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
+            let mut previous_sample: Complex<Flt> = Complex::from(Flt::zero());
+            loop {
+                match receiver.recv().await {
+                    Ok(Samples {
+                        sample_rate,
+                        chunk: input_chunk,
+                    }) => {
+                        if slew_rate_recv.has_changed().unwrap_or(false) {
+                            slew_rate = slew_rate_recv.borrow_and_update().clone();
+                        }
+                        let max_diff = flt!(slew_rate / sample_rate);
+                        let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
+                        for &(mut sample) in input_chunk.iter() {
+                            let diff = sample - previous_sample;
+                            let norm = diff.norm();
+                            if norm > max_diff {
+                                sample = previous_sample + diff / norm * max_diff;
+                            }
+                            output_chunk.push(sample);
+                            previous_sample = sample;
+                        }
+                        if let Err(_) = sender
+                            .send(Samples {
+                                sample_rate,
+                                chunk: output_chunk.finalize(),
+                            })
+                            .await
+                        {
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            receiver_connector,
+            sender_connector,
+            slew_rate: slew_rate_send,
+        }
+    }
+    /// Set slew rate
+    pub fn set_slew_rate(&self, slew_rate: f64) {
+        self.slew_rate.send_replace(slew_rate);
+    }
+}
+
 #[cfg(test)]
 mod tests {}

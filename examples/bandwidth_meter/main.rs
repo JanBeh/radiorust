@@ -1,4 +1,4 @@
-use radiorust::prelude::*;
+use radiorust::{metering, prelude::*};
 
 use soapysdr::Direction::Rx;
 

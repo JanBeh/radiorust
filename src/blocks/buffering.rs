@@ -74,6 +74,10 @@ where
             .map(|entry| entry.instant.elapsed().as_secs_f64())
             .unwrap_or(0.0)
     }
+    /// Number of entries
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
 }
 
 impl<T> Temporal for Message<T>
@@ -178,6 +182,31 @@ where
                             if queue.duration() >= min_capacity {
                                 underrun = false;
                             }
+                        }
+                        match sender.try_reserve() {
+                            Ok(Some(reservation)) => {
+                                let mut reservation = Some(reservation);
+                                if queue.len() > 1 && queue.age() > max_age {
+                                    while queue.len() > 1 && queue.age() > max_age {
+                                        queue.pop();
+                                    }
+                                    if !reset_sent {
+                                        reservation.take().unwrap().reset();
+                                        reset_sent = true;
+                                    }
+                                }
+                                if let Some(reservation) = reservation {
+                                    let message = queue.pop().unwrap();
+                                    match message {
+                                        Message::Value(value) => reservation.send(value),
+                                        Message::Reset => reservation.reset(),
+                                        Message::Finished => reservation.finish(),
+                                    };
+                                    reset_sent = false;
+                                }
+                            }
+                            Ok(None) => (),
+                            Err(_) => closed = true,
                         }
                     }
                     Action::Drain(reservation) => {

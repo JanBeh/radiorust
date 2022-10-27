@@ -66,7 +66,7 @@ impl SimpleSdr {
         let volume = blocks::Function::<Complex<f32>>::new();
         volume.connect_to_producer(&buffer);
 
-        let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, 2 * 4096);
+        let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
         playback.connect_to_producer(&volume);
 
         SimpleSdr {

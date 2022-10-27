@@ -23,7 +23,7 @@ async fn main() {
     volume.connect_to_producer(&filter);
     let audio_mod = blocks::FreqShifter::with_shift(700.0);
     audio_mod.connect_to_producer(&volume);
-    let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, 2 * 4096);
+    let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
     playback.connect_to_producer(&audio_mod);
     /*
     let writer = blocks::io::raw::ContinuousF32BeWriter::new(std::io::BufWriter::new(

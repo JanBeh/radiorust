@@ -107,6 +107,19 @@ impl<T> Sender<T> {
             inner_reservation: self.inner_sender.reserve().await?,
         })
     }
+    /// Check if ready to send
+    ///
+    /// The returned [`Reservation`] handle may be used to send a value
+    /// immediately (through [`Reservation::send`], which is not `async`).
+    ///
+    /// This method returns `Ok(None)` if it's not possible to send a value
+    /// immediately.
+    pub fn try_reserve(&self) -> Result<Option<Reservation<'_, T>>, RsrvError> {
+        Ok(self
+            .inner_sender
+            .try_reserve()?
+            .map(|inner_reservation| Reservation { inner_reservation }))
+    }
     /// Send data to all [`Receiver`]s which have been [connected]
     ///
     /// [connected]: ReceiverConnector::connect

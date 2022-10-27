@@ -240,6 +240,26 @@ impl<T> Sender<T> {
             synced,
         })
     }
+    /// Check if ready to send
+    ///
+    /// The returned [`Reservation`] handle may be used to send a value
+    /// immediately (through [`Reservation::send`], which is not `async`).
+    ///
+    /// This method returns `Ok(None)` if it's not possible to send a value
+    /// immediately.
+    pub fn try_reserve(&self) -> Result<Option<Reservation<'_, T>>, RsrvError> {
+        let synced = self.shared.synced.lock();
+        if synced.unseen == 0 && synced.rcvr_count > 0 {
+            Ok(Some(Reservation {
+                shared: &self.shared,
+                synced,
+            }))
+        } else if synced.subs_count == 0 && synced.rcvr_count == 0 {
+            Err(RsrvError)
+        } else {
+            Ok(None)
+        }
+    }
     /// Send a value
     ///
     /// This method waits when there are no receivers or some receivers have

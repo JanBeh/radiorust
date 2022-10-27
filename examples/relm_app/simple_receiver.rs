@@ -60,14 +60,14 @@ impl SimpleSdr {
         });
         */
 
-        let buffer = blocks::Buffer::new(0.2, 0.0, 0.2, 0.3);
-        buffer.connect_to_producer(&downsample2);
-
         let volume = blocks::Function::<Complex<f32>>::new();
-        volume.connect_to_producer(&buffer);
+        volume.connect_to_producer(&downsample2);
+
+        let buffer = blocks::Buffer::new(0.0, 0.0, 0.0, 0.01);
+        buffer.connect_to_producer(&volume);
 
         let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
-        playback.connect_to_producer(&volume);
+        playback.connect_to_producer(&buffer);
 
         SimpleSdr {
             device,

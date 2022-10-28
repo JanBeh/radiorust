@@ -6,6 +6,7 @@ use crate::numbers::*;
 use crate::samples::*;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
+use tokio::sync::oneshot;
 
 pub use cpal::{Device, Host};
 
@@ -33,6 +34,7 @@ pub fn default_input_device() -> cpal::Device {
 pub struct AudioPlayer {
     receiver_connector: ReceiverConnector<Samples<Complex<f32>>>,
     stream: cpal::Stream,
+    completion: oneshot::Receiver<RecvError>,
 }
 
 impl Consumer<Samples<Complex<f32>>> for AudioPlayer {
@@ -66,6 +68,8 @@ impl AudioPlayer {
         };
         let rt = tokio::runtime::Handle::current();
         let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
+        let (completion_send, completion_recv) = oneshot::channel::<RecvError>();
+        let mut completion_send = Some(completion_send);
         let err_fn = move |err| eprintln!("Audio output error: {err}");
         let mut current_chunk_and_pos: Option<(Chunk<Complex<f32>>, usize)> = None;
         let write_audio = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -84,8 +88,14 @@ impl AudioPlayer {
                                 );
                                 break (chunk, 0);
                             }
-                            Err(RecvError::Closed) => return,
-                            _ => (),
+                            Err(err) => {
+                                if let Some(completion_send) = completion_send.take() {
+                                    completion_send.send(err).ok();
+                                }
+                                if err == RecvError::Closed {
+                                    return;
+                                }
+                            }
                         }
                     },
                 };
@@ -101,6 +111,7 @@ impl AudioPlayer {
         Ok(Self {
             receiver_connector,
             stream,
+            completion: completion_recv,
         })
     }
     /// Resume playback
@@ -112,6 +123,13 @@ impl AudioPlayer {
     pub fn pause(&self) -> Result<(), Box<dyn Error>> {
         self.stream.pause()?;
         Ok(())
+    }
+    /// Wait for played back stream to finish
+    pub async fn wait(self) -> Result<(), Box<dyn Error>> {
+        match self.completion.await? {
+            RecvError::Finished => Ok(()),
+            err => Err(err.into()),
+        }
     }
 }
 

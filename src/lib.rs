@@ -2,7 +2,42 @@
 //!
 //! **Note:** This crate is in an early alpha stage.
 //!
-//! For getting started, have a look at the [`blocks`] module.
+//! # Getting started
+//!
+//! For getting started, have a look at the [`blocks`] module for a selection
+//! of ready-to-use signal processing blocks and see the "Hello World" example
+//! below.
+//! To learn how to implement your own blocks, check out the [`flow`] module
+//! and refer to the implementation of [`blocks::Nop`], which is a trival block
+//! that simply outputs all received data as is.
+//!
+//! # Hello World example
+//!
+//! The following example requires the `cpal` feature to be enabled.
+//!
+//! ```
+//! use radiorust::prelude::*;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//! # #[cfg(any())]
+//! # #[cfg(feature = "cpal")]
+//! # {
+//!     let morse_keyer = blocks::morse::Keyer::with_message(
+//!         4096,
+//!         48000.0,
+//!         blocks::morse::Speed::from_paris_wpm(16.0),
+//!         "Hello World!",
+//!     )
+//!     .unwrap();
+//!     let audio_modulator = blocks::FreqShifter::with_shift(700.0);
+//!     audio_modulator.connect_to_producer(&morse_keyer);
+//!     let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
+//!     playback.connect_to_producer(&audio_modulator);
+//!     playback.wait().await.unwrap();
+//! # }
+//! }
+//! ```
 
 #![warn(missing_docs)]
 

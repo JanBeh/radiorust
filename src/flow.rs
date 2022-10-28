@@ -56,6 +56,7 @@ impl Error for RecvError {}
 /// Connecting the `Sender` to a `Receiver` is done by passing a
 /// [`SenderConnector`] reference to [`ReceiverConnector::connect`].
 /// The `SenderConnector` is obtained when calling [`new_sender`].
+#[derive(Debug)]
 pub struct Sender<T> {
     inner_sender: broadcast_bp::Sender<Message<T>>,
 }
@@ -69,6 +70,7 @@ impl<T> Clone for Sender<T> {
 }
 
 /// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
+#[derive(Debug)]
 pub struct Reservation<'a, T> {
     inner_reservation: broadcast_bp::Reservation<'a, Message<T>>,
 }
@@ -79,6 +81,7 @@ pub struct Reservation<'a, T> {
 /// A reference to a `SenderConnector` can be passed to
 /// [`ReceiverConnector::connect`] to connect the associated `Sender` to the
 /// associated `Receiver`.
+#[derive(Debug)]
 pub struct SenderConnector<T> {
     inner_enlister: broadcast_bp::Enlister<Message<T>>,
 }
@@ -205,6 +208,7 @@ impl<T> Reservation<'_, T> {
 /// Connecting a `Receiver` to a `Sender` is done by passing a
 /// [`SenderConnector`] reference to [`ReceiverConnector::connect`].
 /// The `SenderConnector` is obtained when calling [`new_sender`].
+#[derive(Debug)]
 pub struct ReceiverConnector<T> {
     enlister_tx: watch::Sender<Option<broadcast_bp::Enlister<Message<T>>>>,
 }
@@ -219,6 +223,7 @@ pub struct ReceiverConnector<T> {
 /// Connecting a `Receiver` to a `Sender` is done by passing a
 /// [`SenderConnector`] reference to [`ReceiverConnector::connect`].
 /// The `SenderConnector` is obtained when calling [`new_sender`].
+#[derive(Debug)]
 pub struct Receiver<T> {
     enlister_rx: watch::Receiver<Option<broadcast_bp::Enlister<Message<T>>>>,
     inner_receiver: Option<broadcast_bp::Receiver<Message<T>>>,

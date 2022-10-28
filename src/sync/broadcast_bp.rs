@@ -82,6 +82,7 @@ impl Slot {
     }
 }
 
+#[derive(Debug)]
 struct Synced<T> {
     data: Option<T>,
     slot: Slot,
@@ -91,6 +92,7 @@ struct Synced<T> {
     unseen: usize,
 }
 
+#[derive(Debug)]
 struct Shared<T> {
     synced: Mutex<Synced<T>>,
     notify_sndr: Notify,
@@ -98,22 +100,26 @@ struct Shared<T> {
 }
 
 /// Sender for broadcast channel with backpressure
+#[derive(Debug)]
 pub struct Sender<T> {
     shared: Arc<Shared<T>>,
 }
 
 /// Handle allowing subscription to [`Sender`]
+#[derive(Debug)]
 pub struct Enlister<T> {
     shared: Arc<Shared<T>>,
 }
 
 /// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
+#[derive(Debug)]
 pub struct Reservation<'a, T> {
     shared: &'a Shared<T>,
     synced: MutexGuard<'a, Synced<T>>,
 }
 
 /// Receiver for broadcast channel with backpressure
+#[derive(Debug)]
 pub struct Receiver<T> {
     shared: Arc<Shared<T>>,
     slot: Slot,

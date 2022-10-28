@@ -98,6 +98,19 @@ where
 /// This struct is a [`Consumer`] and [`Producer`] which forwards data from a
 /// connected [`Producer`] to all connected [`Consumer`]s while performing
 /// buffering.
+///
+/// This block may also be used to "suck" parasitic buffers empty. As each
+/// [`flow::Sender`] has a capacity of `1` (see underlying [`broadcast_bp`]
+/// channel), a chain of [blocks] may accumulate a significant buffer volume.
+/// This may be unwanted.
+/// By placing a `Buffer` block near the end of the chain and providing a
+/// `max_age` argument equal to or smaller than `max_capacity` to
+/// [`Buffer::new`], the buffer block will consume (and discard) data even when
+/// its connected consumer isn't fast enough.
+///
+/// [`flow::Sender`]: crate::flow::Sender
+/// [`broadcast_bp`]: crate::sync::broadcast_bp
+/// [blocks]: crate::blocks
 pub struct Buffer<T> {
     receiver_connector: ReceiverConnector<T>,
     sender_connector: SenderConnector<T>,
@@ -128,7 +141,8 @@ where
     /// at least `min_capacity` seconds before sending out data again.
     /// It will suspend receiving when holding strictly more than
     /// `max_capacity` seconds of data.
-    /// If buffered data is older than `max_age` seconds, it will be discarded.
+    /// If buffered data is held longer than `max_age` seconds, it will be
+    /// discarded.
     pub fn new(initial_capacity: f64, min_capacity: f64, max_capacity: f64, max_age: f64) -> Self {
         let (mut receiver, receiver_connector) = new_receiver::<T>();
         let (sender, sender_connector) = new_sender::<T>();

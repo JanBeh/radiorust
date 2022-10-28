@@ -1,5 +1,92 @@
 //! Data flow between [blocks]
 //!
+//! Signal processing blocks implement the [`Producer`] trait, the [`Consumer`]
+//! trait, or both traits.
+//!
+//! Upon creation, `Producer`s use the [`new_sender`] function to create a pair
+//! consisting of a [`Sender`] and a [`SenderConnector`]. The `Sender` is
+//! passed to a background task while the `SenderConnector` is stored and
+//! accessible through the [`Producer::sender_connector`] method.
+//!
+//! `Consumers` use the [`new_receiver`] function upon creation to create a
+//! pair of a [`Receiver`] and a [`ReceiverConnector`]. The `Receiver` is
+//! passed to a background task while the `ReceiverConnector` is stored and
+//! accessible through the [`Consumer::receiver_connector`] method.
+//!
+//! For each [`Sender`], there is a buffer capacity of `1` (see underlying
+//! [`broadcast_bp`] channel). Thus a chain of [blocks] may accumulate a
+//! significant buffer volume. This may be unwanted and can be handled by
+//! placing a [`blocks::buffering::Buffer`] block near the end of the chain.
+//!
+//! [blocks]: crate::blocks
+//! [`blocks::buffering::Buffer`]: crate::blocks::buffering::Buffer
+//!
+//! # Example
+//!
+//! The following toy example passes a `String` from a [`Producer`] to a
+//! [`Consumer`]. For radio applications, you will usually pass [`Samples`]
+//! instead.
+//!
+//! [`Samples`]: crate::samples::Samples
+//!
+//! ```
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async move {
+//! use radiorust::flow::*;
+//! use tokio::sync::oneshot;
+//! use tokio::task::spawn;
+//!
+//! struct MySource {
+//!     sender_connector: SenderConnector<String>,
+//!     /* extra fields can go here */
+//! }
+//! impl MySource {
+//!     fn new() -> Self {
+//!         let (sender, sender_connector) = new_sender::<String>();
+//!         spawn(async move {
+//!             sender.send("Hello World!".to_string()).await;
+//!         });
+//!         Self { sender_connector }
+//!     }
+//! }
+//! impl Producer<String> for MySource {
+//!     fn sender_connector(&self) -> &SenderConnector<String> {
+//!         &self.sender_connector
+//!     }
+//! }
+//!
+//! struct MySink {
+//!     receiver_connector: ReceiverConnector<String>,
+//!     finish: oneshot::Receiver<()>,
+//!     /* extra fields can go here */
+//! }
+//! impl MySink {
+//!     fn new() -> Self {
+//!         let (mut receiver, receiver_connector) = new_receiver::<String>();
+//!         let (finish_send, finish_recv) = oneshot::channel::<()>();
+//!         spawn(async move {
+//!             assert_eq!(receiver.recv().await.unwrap(), "Hello World!".to_string());
+//!             finish_send.send(());
+//!         });
+//!         Self { receiver_connector, finish: finish_recv }
+//!     }
+//!     async fn wait(self) {
+//!         self.finish.await.unwrap();
+//!     }
+//! }
+//! impl Consumer<String> for MySink {
+//!     fn receiver_connector(&self) -> &ReceiverConnector<String> {
+//!         &self.receiver_connector
+//!     }
+//! }
+//!
+//! let source = MySource::new();
+//! let sink = MySink::new();
+//! sink.connect_to_producer(&source);
+//!
+//! sink.wait().await;
+//! # });
+//! ```
+//!
 //! [blocks]: crate::blocks
 
 use crate::sync::broadcast_bp;
@@ -56,6 +143,13 @@ impl Error for RecvError {}
 /// Connecting the `Sender` to a `Receiver` is done by passing a
 /// [`SenderConnector`] reference to [`ReceiverConnector::connect`].
 /// The `SenderConnector` is obtained when calling [`new_sender`].
+///
+/// There is buffer capacity of `1` for each `Sender`, i.e. `Sender::send`
+/// completes immediately for the first value sent or after all `Receiver`s
+/// have received the previous value.
+/// (Note: In some cases, `Sender::send` may wait until receiving is attempted
+/// by one `Receiver`. This is because the [`broadcast_bp::Sender`] might not
+/// see a [`broadcast_bp::Receiver`] as subscriber yet.)
 #[derive(Debug)]
 pub struct Sender<T> {
     inner_sender: broadcast_bp::Sender<Message<T>>,

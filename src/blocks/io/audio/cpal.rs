@@ -25,7 +25,7 @@ pub fn default_output_device() -> cpal::Device {
 /// This function panics if there is no audio input device available.
 pub fn default_input_device() -> cpal::Device {
     cpal::default_host()
-        .default_output_device()
+        .default_input_device()
         .expect("no audio input device available")
 }
 

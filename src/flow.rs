@@ -382,7 +382,7 @@ pub trait Consumer<T> {
             .connect(producer.sender_connector());
     }
     /// Disconnect `Consumer` from any connected [`Producer`] if connected
-    fn disconnect(&self) {
+    fn disconnect_from_producer(&self) {
         self.receiver_connector().disconnect();
     }
 }

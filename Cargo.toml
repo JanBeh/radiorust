@@ -40,5 +40,9 @@ required-features = ["cpal"]
 name = "bandwidth_meter"
 required-features = ["soapysdr"]
 
+[[example]]
+name = "audiopipe"
+required-features = ["cpal"]
+
 [package.metadata.docs.rs]
 no-default-features = true

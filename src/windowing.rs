@@ -49,3 +49,19 @@ impl Kaiser {
         }
     }
 }
+
+/// Custom window provided by closure
+///
+/// For the struct to implement the [`Window`] trait, the closure `F` must be
+/// `Fn(f64) -> f64` and accept input and return values according to the
+/// [`Window::relative_value_at`] method.
+pub struct CustomWindow<F>(pub F);
+
+impl<F> Window for CustomWindow<F>
+where
+    F: Fn(f64) -> f64,
+{
+    fn relative_value_at(&self, x: f64) -> f64 {
+        (self.0)(x)
+    }
+}

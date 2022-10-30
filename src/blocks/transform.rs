@@ -25,7 +25,7 @@ use tokio::task::spawn;
 pub struct MapEachSample<T> {
     receiver_connector: ReceiverConnector<Samples<T>>,
     sender_connector: SenderConnector<Samples<T>>,
-    closure: mpsc::UnboundedSender<Box<dyn Fn(T) -> T + Send + Sync + 'static>>,
+    closure: mpsc::UnboundedSender<Box<dyn FnMut(T) -> T + Send + 'static>>,
 }
 
 impl<T> Consumer<Samples<T>> for MapEachSample<T> {
@@ -51,11 +51,11 @@ where
     /// Creates a block which applies the given `closure` to every sample
     pub fn with_closure<F>(closure: F) -> Self
     where
-        F: Fn(T) -> T + Send + Sync + 'static,
+        F: FnMut(T) -> T + Send + 'static,
     {
         Self::new_internal(Box::new(closure))
     }
-    fn new_internal(closure: Box<dyn Fn(T) -> T + Send + Sync + 'static>) -> Self {
+    fn new_internal(closure: Box<dyn FnMut(T) -> T + Send + 'static>) -> Self {
         let (mut receiver, receiver_connector) = new_receiver::<Samples<T>>();
         let (sender, sender_connector) = new_sender::<Samples<T>>();
         let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
@@ -64,7 +64,7 @@ where
             .unwrap_or_else(|_| unreachable!());
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
-            let mut closure_opt: Option<Box<dyn Fn(T) -> T + Send + Sync + 'static>> = None;
+            let mut closure_opt: Option<Box<dyn FnMut(T) -> T + Send + 'static>> = None;
             loop {
                 match receiver.recv().await {
                     Ok(Samples {
@@ -77,7 +77,7 @@ where
                                 Err(_) => break,
                             }
                         }
-                        let closure = closure_opt.as_ref().unwrap();
+                        let closure = closure_opt.as_mut().unwrap();
                         let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
                         for sample in input_chunk.iter() {
                             output_chunk.push(closure(sample.clone()));
@@ -112,7 +112,7 @@ where
     /// Modifies the used `closure`, which is applied to every sample
     pub fn set_closure<F>(&self, closure: F)
     where
-        F: Fn(T) -> T + Send + Sync + 'static,
+        F: FnMut(T) -> T + Send + 'static,
     {
         self.closure.send(Box::new(closure)).ok();
     }

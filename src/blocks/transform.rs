@@ -118,6 +118,104 @@ where
     }
 }
 
+/// Block which applies a closure to every received message (e.g. [`Samples`])
+/// before sending it further.
+///
+/// Note that this block doesn't allow to specify how [`RecvError`]s are
+/// handled. Thus in in many cases, it is better to implement a custom type as
+/// [`Consumer`]/[`Producer`] (see [`Nop`] for an example) instead of using
+/// this block.
+///
+/// See also [`MapEachSample`] for a block which performs the operation on a
+/// per-sample basis and may be better suited when wanting to apply a function
+/// to each sample.
+///
+/// [`Nop`]: crate::blocks::Nop
+pub struct MapEachMessage<T> {
+    receiver_connector: ReceiverConnector<T>,
+    sender_connector: SenderConnector<T>,
+    closure: mpsc::UnboundedSender<Box<dyn FnMut(T) -> T + Send + 'static>>,
+}
+
+impl<T> Consumer<T> for MapEachMessage<T> {
+    fn receiver_connector(&self) -> &ReceiverConnector<T> {
+        &self.receiver_connector
+    }
+}
+
+impl<T> Producer<T> for MapEachMessage<T> {
+    fn sender_connector(&self) -> &SenderConnector<T> {
+        &self.sender_connector
+    }
+}
+
+impl<T> MapEachMessage<T>
+where
+    T: Clone + Send + 'static,
+{
+    /// Creates a block which doesn't modify the received messages (e.g.
+    /// [`Samples`])
+    pub fn new() -> Self {
+        Self::with_closure(|x| x)
+    }
+    /// Creates a block which applies the given `closure` to each message (e.g.
+    /// to each [`Samples`])
+    pub fn with_closure<F>(closure: F) -> Self
+    where
+        F: FnMut(T) -> T + Send + 'static,
+    {
+        Self::new_internal(Box::new(closure))
+    }
+    fn new_internal(closure: Box<dyn FnMut(T) -> T + Send + 'static>) -> Self {
+        let (mut receiver, receiver_connector) = new_receiver::<T>();
+        let (sender, sender_connector) = new_sender::<T>();
+        let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
+        closure_send
+            .send(closure)
+            .unwrap_or_else(|_| unreachable!());
+        spawn(async move {
+            let mut closure_opt: Option<Box<dyn FnMut(T) -> T + Send + 'static>> = None;
+            loop {
+                match receiver.recv().await {
+                    Ok(message) => {
+                        loop {
+                            match closure_recv.try_recv() {
+                                Ok(f) => closure_opt = Some(f),
+                                Err(_) => break,
+                            }
+                        }
+                        let closure = closure_opt.as_mut().unwrap();
+                        let message = closure(message);
+                        if let Err(_) = sender.send(message).await {
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            receiver_connector,
+            sender_connector,
+            closure: closure_send,
+        }
+    }
+    /// Modifies the used `closure`, which is applied to every sample
+    pub fn set_closure<F>(&self, closure: F)
+    where
+        F: FnMut(T) -> T + Send + 'static,
+    {
+        self.closure.send(Box::new(closure)).ok();
+    }
+}
+
 /// Complex oscillator and mixer, which shifts all frequencies in an I/Q stream
 pub struct FreqShifter<Flt> {
     receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,

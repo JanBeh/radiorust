@@ -10,6 +10,102 @@ use num::rational::Ratio;
 use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
 
+/// Gain control
+///
+/// Note that while this block works with generic [`Float`]s, the `gain` value
+/// passed to [`GainControl::new`] and [`GainControl::set`] is of type [`f64`].
+///
+/// The `gain` value is multiplied with each sample such that a value of `0.5`
+/// corresponds to *−0.6 dB*.
+///
+/// # Example
+///
+/// ```
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async move {
+/// use radiorust::blocks::transform::GainControl;
+/// let attenuate_6db = GainControl::<f32>::new(0.5f64);
+/// # });
+/// ```
+pub struct GainControl<Flt> {
+    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    gain: watch::Sender<f64>,
+}
+
+impl<Flt> Consumer<Samples<Complex<Flt>>> for GainControl<Flt> {
+    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
+        &self.receiver_connector
+    }
+}
+
+impl<Flt> Producer<Samples<Complex<Flt>>> for GainControl<Flt> {
+    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
+        &self.sender_connector
+    }
+}
+
+impl<Flt> GainControl<Flt>
+where
+    Flt: Float,
+{
+    /// Creates a block which multiplies each sample with the given `gain`
+    pub fn new(gain: f64) -> Self {
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (gain_send, mut gain_recv) = watch::channel(gain);
+        spawn(async move {
+            let mut gain = flt!(gain);
+            let mut buf_pool = ChunkBufPool::new();
+            loop {
+                match receiver.recv().await {
+                    Ok(Samples {
+                        sample_rate,
+                        chunk: input_chunk,
+                    }) => {
+                        if gain_recv.has_changed().unwrap_or(false) {
+                            gain = flt!(gain_recv.borrow_and_update().clone())
+                        }
+                        let mut output_chunk = buf_pool.get_with_capacity(input_chunk.len());
+                        for sample in input_chunk.iter() {
+                            output_chunk.push(sample * gain);
+                        }
+                        if let Err(_) = sender
+                            .send(Samples {
+                                sample_rate: sample_rate,
+                                chunk: output_chunk.finalize(),
+                            })
+                            .await
+                        {
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(_) = sender.forward_error(err).await {
+                            return;
+                        }
+                        if err == RecvError::Closed {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            receiver_connector,
+            sender_connector,
+            gain: gain_send,
+        }
+    }
+    /// Get current gain
+    pub fn get(&self) -> f64 {
+        self.gain.borrow().clone()
+    }
+    /// Set gain
+    pub fn set(&self, gain: f64) {
+        self.gain.send_replace(gain);
+    }
+}
+
 /// Block which receives [`Samples<T>`] and applies a closure to every sample,
 /// e.g. to change amplitude or to apply a constant phase shift, before sending
 /// it further.
@@ -22,6 +118,8 @@ use tokio::task::spawn;
 /// let attenuate_6db = MapEachSample::<Complex<f32>>::with_closure(move |x| x / 2.0);
 /// # });
 /// ```
+///
+/// See also [`GainControl`] for a more direct way to use an attenuator.
 pub struct MapEachSample<T> {
     receiver_connector: ReceiverConnector<Samples<T>>,
     sender_connector: SenderConnector<Samples<T>>,
@@ -360,4 +458,31 @@ where
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn test_gain_control() {
+        let (sender, sender_connector) = new_sender::<Samples<Complex<f32>>>();
+        let attenuator = GainControl::new(0.25);
+        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
+        attenuator.connect_to_producer(&sender_connector);
+        attenuator.connect_to_consumer(&receiver_connector);
+        let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
+        let mut chunk_buf = buf_pool.get();
+        chunk_buf.push(Complex::new(32.0, -1.0));
+        chunk_buf.push(Complex::new(15.0, -2.0));
+        let chunk = chunk_buf.finalize();
+        sender
+            .send(Samples {
+                sample_rate: 48000.0,
+                chunk,
+            })
+            .await
+            .unwrap();
+        let received = receiver.recv().await.unwrap();
+        assert_eq!(received.chunk[0].re, 8.0);
+        assert_eq!(received.chunk[0].im, -0.25);
+        assert_eq!(received.chunk[1].re, 3.75);
+        assert_eq!(received.chunk[1].im, -0.5);
+    }
+}

@@ -42,13 +42,11 @@ impl AppUpdate for AppModel {
         match msg {
             AppMsg::VolumeUp => {
                 self.volume *= 2.0f64.sqrt();
-                let vol = self.volume as f32;
-                self.simple_sdr.volume.set_closure(move |x| x * vol);
+                self.simple_sdr.volume.set(self.volume);
             }
             AppMsg::VolumeDown => {
                 self.volume /= 2.0f64.sqrt();
-                let vol = self.volume as f32;
-                self.simple_sdr.volume.set_closure(move |x| x * vol);
+                self.simple_sdr.volume.set(self.volume);
             }
             AppMsg::FreqUp => {
                 let mut shift = self.simple_sdr.freq_shifter.shift();

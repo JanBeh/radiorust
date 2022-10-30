@@ -56,7 +56,7 @@ pub mod prelude {
     pub use super::chunks::{Overlapper, Rechunker};
     pub use super::filters::Filter;
     pub use super::resampling::{Downsampler, Upsampler};
-    pub use super::transform::{FreqShifter, MapEachSample};
+    pub use super::transform::{FreqShifter, GainControl, MapEachSample};
 }
 
 pub use self::prelude::*;

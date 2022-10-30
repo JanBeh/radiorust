@@ -6,7 +6,7 @@ pub struct SimpleSdr {
     pub device: soapysdr::Device,
     pub sdr_rx: blocks::io::rf::soapysdr::SoapySdrRx,
     pub freq_shifter: blocks::FreqShifter<f32>,
-    pub volume: blocks::MapEachSample<Complex<f32>>,
+    pub volume: blocks::GainControl<f32>,
     pub playback: blocks::io::audio::cpal::AudioPlayer,
 }
 
@@ -60,7 +60,7 @@ impl SimpleSdr {
         });
         */
 
-        let volume = blocks::MapEachSample::<Complex<f32>>::new();
+        let volume = blocks::GainControl::<f32>::new(1.0);
         volume.connect_to_producer(&downsample2);
 
         let buffer = blocks::Buffer::new(0.0, 0.0, 0.0, 0.01);

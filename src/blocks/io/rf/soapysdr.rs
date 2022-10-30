@@ -7,9 +7,10 @@ use crate::samples::*;
 
 use tokio::runtime;
 use tokio::sync::{watch, Mutex};
-use tokio::task::{spawn_blocking, JoinHandle};
+use tokio::task::spawn_blocking;
 
 use std::mem::take;
+use std::thread::JoinHandle;
 
 struct SoapySdrRxRetval {
     rx_stream: soapysdr::RxStream<Complex<f32>>,
@@ -97,8 +98,8 @@ impl SoapySdrRx {
                 let sample_rate = self.sample_rate;
                 let sender = self.sender.clone();
                 let (abort_send, abort_recv) = watch::channel::<()>(());
-                let join_handle = spawn_blocking(move || {
-                    let rt = runtime::Handle::current();
+                let rt = runtime::Handle::current();
+                let join_handle = std::thread::spawn(move || {
                     let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
                     let mut result = Ok(());
                     while !abort_recv.has_changed().unwrap_or(true) {
@@ -145,7 +146,10 @@ impl SoapySdrRx {
             }
             SoapySdrRxState::Active(SoapySdrRxActive { abort, join_handle }) => {
                 drop(abort);
-                let retval = join_handle.await.unwrap();
+                let retval = runtime::Handle::current()
+                    .spawn_blocking(move || join_handle.join().unwrap())
+                    .await
+                    .unwrap();
                 *state_guard = SoapySdrRxState::Idle(retval.rx_stream);
                 retval.result
             }

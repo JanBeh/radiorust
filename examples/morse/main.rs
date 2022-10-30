@@ -19,7 +19,7 @@ async fn main() {
         }
     });
     filter.connect_to_producer(&limiter);
-    let volume = blocks::Function::with_closure(|x| 0.5 * x);
+    let volume = blocks::MapEachSample::with_closure(|x| 0.5 * x);
     volume.connect_to_producer(&filter);
     let audio_mod = blocks::FreqShifter::with_shift(700.0);
     audio_mod.connect_to_producer(&volume);

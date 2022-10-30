@@ -18,29 +18,29 @@ use tokio::task::spawn;
 ///
 /// ```
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async move {
-/// use radiorust::{blocks::Function, numbers::Complex};
-/// let attenuate_6db = Function::<Complex<f32>>::with_closure(move |x| x / 2.0);
+/// use radiorust::{blocks::MapEachSample, numbers::Complex};
+/// let attenuate_6db = MapEachSample::<Complex<f32>>::with_closure(move |x| x / 2.0);
 /// # });
 /// ```
-pub struct Function<T> {
+pub struct MapEachSample<T> {
     receiver_connector: ReceiverConnector<Samples<T>>,
     sender_connector: SenderConnector<Samples<T>>,
     closure: mpsc::UnboundedSender<Box<dyn Fn(T) -> T + Send + Sync + 'static>>,
 }
 
-impl<T> Consumer<Samples<T>> for Function<T> {
+impl<T> Consumer<Samples<T>> for MapEachSample<T> {
     fn receiver_connector(&self) -> &ReceiverConnector<Samples<T>> {
         &self.receiver_connector
     }
 }
 
-impl<T> Producer<Samples<T>> for Function<T> {
+impl<T> Producer<Samples<T>> for MapEachSample<T> {
     fn sender_connector(&self) -> &SenderConnector<Samples<T>> {
         &self.sender_connector
     }
 }
 
-impl<T> Function<T>
+impl<T> MapEachSample<T>
 where
     T: Clone + Send + Sync + 'static,
 {

@@ -1,7 +1,5 @@
 //! Software defined radio
 //!
-//! **Note:** This crate is in an early alpha stage.
-//!
 //! # Getting started
 //!
 //! For getting started, have a look at the [`blocks`] module for a selection

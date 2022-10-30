@@ -3,8 +3,6 @@
 `radiorust` is a software defined radio (SDR) library which builds upon the
 Tokio runtime and message passing channels.
 
-It is in an early alpha stage and its interfaces may change at any time.
-
 ## License
 
 `radiorust` is dual-licensed under the terms of the Apache License,

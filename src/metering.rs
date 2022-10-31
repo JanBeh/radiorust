@@ -1,5 +1,6 @@
 //! Metering (e.g. level or bandwidth measurement)
 
+use crate::flt;
 use crate::numbers::*;
 use crate::samples::*;
 
@@ -81,6 +82,35 @@ where
         bw
     } else {
         0.0
+    }
+}
+
+/// Converts a slice of complex numbers (e.g. a Fourier transformed chunk) into
+/// a given count (`resolution`) of real numbers reflecting the energy
+///
+/// Note that this function expects there to be no wraparound in the middle of
+/// the input, e.g. the output of a Fourier transform should be shifted such
+/// that the center frequency is in the middle of `input` before this function
+/// is called.
+pub fn rescale_energy<Flt>(output: &mut Vec<Flt>, resolution: usize, input: &[Complex<Flt>])
+where
+    Flt: Float,
+{
+    let n: usize = input.len();
+    assert!(n > 0);
+    output.resize(resolution, Flt::zero());
+    for (output_idx, output) in output.iter_mut().enumerate() {
+        let left: Flt = flt!(output_idx) / flt!(resolution) * flt!(n);
+        let right: Flt = (flt!(output_idx) + Flt::one()) / flt!(resolution) * flt!(n);
+        let left_floor: usize = (left.floor().to_usize().unwrap()).min(n-1);
+        let right_ceil: usize = (right.ceil().to_usize().unwrap()).min(n);
+        *output = Flt::zero();
+        for input_idx in left_floor..right_ceil {
+            let left_bounded: Flt = flt!(input_idx).max(left);
+            let right_bounded: Flt = (flt!(input_idx) + Flt::one()).min(right);
+            let scale: Flt = right_bounded - left_bounded;
+            *output += input[input_idx].norm_sqr() * scale;
+        }
     }
 }
 
@@ -217,5 +247,49 @@ mod tests {
             ),
             2.98 * 48000.0 / 8.0,
         );
+    }
+    #[test]
+    fn test_rescale_energy_same_size() {
+        let input = vec![
+            Complex::new(0.0, 0.0),
+            Complex::new(2.0, 1.0),
+            Complex::new(-0.5, 0.0),
+        ];
+        let mut output = vec![];
+        rescale_energy(&mut output, 3, &input);
+        assert_eq!(output.len(), 3);
+        assert_approx(output[0], 0.0);
+        assert_approx(output[1], 5.0);
+        assert_approx(output[2], 0.25);
+    }
+    #[test]
+    fn test_rescale_energy_smaller() {
+        let input = vec![
+            Complex::new(1.0, 0.0),
+            Complex::new(2.0, 0.0),
+            Complex::new(3.0, 0.0),
+            Complex::new(4.0, 0.0),
+        ];
+        let mut output = vec![];
+        rescale_energy(&mut output, 3, &input);
+        assert_eq!(output.len(), 3);
+        assert_approx(output[0], 2.3333333333333);
+        assert_approx(output[1], 8.6666666666667);
+        assert_approx(output[2], 19.0);
+    }
+    #[test]
+    fn test_rescale_energy_larger() {
+        let input = vec![
+            Complex::new(1.0, 0.0),
+            Complex::new(2.0, 0.0),
+            Complex::new(3.0, 0.0),
+        ];
+        let mut output = vec![];
+        rescale_energy(&mut output, 4, &input);
+        assert_eq!(output.len(), 4);
+        assert_approx(output[0], 0.75);
+        assert_approx(output[1], 2.25);
+        assert_approx(output[2], 4.25);
+        assert_approx(output[3], 6.75);
     }
 }

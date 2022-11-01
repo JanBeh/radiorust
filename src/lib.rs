@@ -29,9 +29,9 @@
 //!     )
 //!     .unwrap();
 //!     let audio_modulator = blocks::FreqShifter::with_shift(700.0);
-//!     audio_modulator.connect_to_producer(&morse_keyer);
+//!     audio_modulator.feed_from(&morse_keyer);
 //!     let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
-//!     playback.connect_to_producer(&audio_modulator);
+//!     playback.feed_from(&audio_modulator);
 //!     playback.wait().await.unwrap();
 //! # }
 //! }

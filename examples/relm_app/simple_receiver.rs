@@ -23,10 +23,10 @@ impl SimpleSdr {
         sdr_rx.activate().await.unwrap();
 
         let freq_shifter = blocks::FreqShifter::<f32>::with_shift(0.0e6);
-        freq_shifter.connect_to_producer(&sdr_rx);
+        freq_shifter.feed_from(&sdr_rx);
 
         let downsample1 = blocks::Downsampler::<f32>::new(16384, 384000.0, 200000.0);
-        downsample1.connect_to_producer(&freq_shifter);
+        downsample1.feed_from(&freq_shifter);
 
         let filter1 = blocks::Filter::new(|_, freq| {
             if freq.abs() <= 100000.0 {
@@ -35,10 +35,10 @@ impl SimpleSdr {
                 Complex::from(0.0)
             }
         });
-        filter1.connect_to_producer(&downsample1);
+        filter1.feed_from(&downsample1);
 
         let demodulator = blocks::modulation::FmDemod::<f32>::new(150000.0);
-        demodulator.connect_to_producer(&filter1);
+        demodulator.feed_from(&filter1);
 
         let filter2 = blocks::filters::Filter::new_rectangular(|bin, freq| {
             if bin.abs() >= 1 && freq.abs() >= 20.0 && freq.abs() <= 16000.0 {
@@ -47,27 +47,27 @@ impl SimpleSdr {
                 Complex::from(0.0)
             }
         });
-        filter2.connect_to_producer(&demodulator);
+        filter2.feed_from(&demodulator);
 
         let downsample2 = blocks::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
-        downsample2.connect_to_producer(&filter2);
+        downsample2.feed_from(&filter2);
 
         /*
         let writer = blocks::io::raw::ContinuousF32BeWriter::with_path("output.raw");
-        writer.connect_to_producer(&downsample2);
+        writer.feed_from(&downsample2);
         tokio::spawn(async move {
             writer.wait().await.ok();
         });
         */
 
         let volume = blocks::GainControl::<f32>::new(1.0);
-        volume.connect_to_producer(&downsample2);
+        volume.feed_from(&downsample2);
 
         let buffer = blocks::Buffer::new(0.0, 0.0, 0.0, 0.01);
-        buffer.connect_to_producer(&volume);
+        buffer.feed_from(&volume);
 
         let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
-        playback.connect_to_producer(&buffer);
+        playback.feed_from(&buffer);
 
         SimpleSdr {
             device,

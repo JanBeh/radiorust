@@ -102,7 +102,7 @@ where
     for (output_idx, output) in output.iter_mut().enumerate() {
         let left: Flt = flt!(output_idx) / flt!(resolution) * flt!(n);
         let right: Flt = (flt!(output_idx) + Flt::one()) / flt!(resolution) * flt!(n);
-        let left_floor: usize = (left.floor().to_usize().unwrap()).min(n-1);
+        let left_floor: usize = (left.floor().to_usize().unwrap()).min(n - 1);
         let right_ceil: usize = (right.ceil().to_usize().unwrap()).min(n);
         *output = Flt::zero();
         for input_idx in left_floor..right_ceil {

@@ -81,7 +81,7 @@
 //!
 //! let source = MySource::new();
 //! let sink = MySink::new();
-//! sink.connect_to_producer(&source);
+//! sink.feed_from(&source);
 //!
 //! sink.wait().await;
 //! # });
@@ -454,10 +454,15 @@ pub trait Producer<T> {
     /// Obtain reference to [`SenderConnector`]
     fn sender_connector(&self) -> &SenderConnector<T>;
     /// Connect `Producer` to [`Consumer`]
-    fn connect_to_consumer<C: Consumer<T>>(&self, consumer: &C) {
+    fn feed_into<C: Consumer<T>>(&self, consumer: &C) {
         consumer
             .receiver_connector()
             .connect(self.sender_connector());
+    }
+    /// Connect `Producer` to [`Consumer`]
+    #[deprecated(note = "method has been renamed to `feed_into`")]
+    fn connect_to_consumer<C: Consumer<T>>(&self, consumer: &C) {
+        self.feed_into(consumer)
     }
 }
 
@@ -476,13 +481,23 @@ pub trait Consumer<T> {
     /// Obtain reference to [`ReceiverConnector`]
     fn receiver_connector(&self) -> &ReceiverConnector<T>;
     /// Connect `Consumer` to [`Producer`]
-    fn connect_to_producer<P: Producer<T>>(&self, producer: &P) {
+    fn feed_from<P: Producer<T>>(&self, producer: &P) {
         self.receiver_connector()
             .connect(producer.sender_connector());
     }
     /// Disconnect `Consumer` from any connected [`Producer`] if connected
-    fn disconnect_from_producer(&self) {
+    fn feed_from_none(&self) {
         self.receiver_connector().disconnect();
+    }
+    /// Connect `Consumer` to [`Producer`]
+    #[deprecated(note = "method has been renamed to `feed_from`")]
+    fn connect_to_producer<P: Producer<T>>(&self, producer: &P) {
+        self.feed_from(producer)
+    }
+    /// Disconnect `Consumer` from any connected [`Producer`] if connected
+    #[deprecated(note = "method has been renamed to `feed_from_none`")]
+    fn disconnect_from_producer(&self) {
+        self.feed_from_none()
     }
 }
 

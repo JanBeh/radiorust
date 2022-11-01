@@ -465,8 +465,8 @@ mod tests {
         let (sender, sender_connector) = new_sender::<Samples<Complex<f32>>>();
         let attenuator = GainControl::new(0.25);
         let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
-        attenuator.connect_to_producer(&sender_connector);
-        attenuator.connect_to_consumer(&receiver_connector);
+        attenuator.feed_from(&sender_connector);
+        attenuator.feed_into(&receiver_connector);
         let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
         let mut chunk_buf = buf_pool.get();
         chunk_buf.push(Complex::new(32.0, -1.0));

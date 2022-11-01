@@ -49,9 +49,9 @@ async fn main() {
     sdr_rx.activate().await.unwrap();
     let freq_shifter = blocks::FreqShifter::<f32>::with_shift(freq_offset);
     println!("Frequency: {}", hw_frequency - freq_offset);
-    freq_shifter.connect_to_producer(&sdr_rx);
+    freq_shifter.feed_from(&sdr_rx);
     let downsampler = blocks::Downsampler::<f32>::new(1024, 102400.0, max_bandwidth);
-    downsampler.connect_to_producer(&freq_shifter);
+    downsampler.feed_from(&freq_shifter);
     let filter = blocks::Filter::new(move |_, freq| {
         if freq.abs() <= max_bandwidth / 2.0 {
             Complex::from(1.0)
@@ -59,13 +59,13 @@ async fn main() {
             Complex::from(0.0)
         }
     });
-    filter.connect_to_producer(&downsampler);
+    filter.feed_from(&downsampler);
     let overlapper = blocks::Overlapper::new(quality);
-    overlapper.connect_to_producer(&filter);
+    overlapper.feed_from(&filter);
     let fourier = blocks::Fourier::with_window(Kaiser::with_null_at_bin(quality as f64));
-    fourier.connect_to_producer(&overlapper);
+    fourier.feed_from(&overlapper);
     let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
-    receiver_connector.connect_to_producer(&fourier);
+    receiver_connector.feed_from(&fourier);
     let mut values: VecDeque<f64> = VecDeque::new();
     let mut i = 0;
     loop {

@@ -268,8 +268,8 @@ mod tests {
         let (sender, sender_connector) = new_sender();
         let rechunk = Rechunker::<u8>::new(1024);
         let (mut receiver, receiver_connector) = new_receiver();
-        sender_connector.connect_to_consumer(&rechunk);
-        rechunk.connect_to_consumer(&receiver_connector);
+        sender_connector.feed_into(&rechunk);
+        rechunk.feed_into(&receiver_connector);
         assert!(tokio::select!(
             _ = async move {
                 loop {

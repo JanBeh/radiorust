@@ -392,7 +392,7 @@ mod tests {
             }
         });
         let (mut receiver, receiver_connector) = new_receiver::<i32>();
-        receiver_connector.connect_to_producer(&source);
+        receiver_connector.feed_from(&source);
         drop(receiver_connector);
         assert_eq!(receiver.recv().await, Ok(1));
         assert_eq!(receiver.recv().await, Ok(2));
@@ -408,7 +408,7 @@ mod tests {
     async fn test_continuous_closure_sink_wait() {
         let sink = ContinuousClosureSink::<(), ()>::new(|_| panic!());
         let source = ClosureSource::<(), ()>::new_async(|| std::future::pending());
-        sink.connect_to_producer(&source);
+        sink.feed_from(&source);
         select! {
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => (),
             _ = sink.wait() => panic!(),

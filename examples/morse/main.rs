@@ -10,7 +10,7 @@ async fn main() {
     )
     .unwrap();
     let limiter = blocks::filters::SlewRateLimiter::new(100.0);
-    limiter.connect_to_producer(&keyer);
+    limiter.feed_from(&keyer);
     let filter = blocks::Filter::new(|_, freq| {
         if freq.abs() <= 100.0 {
             Complex::from(1.0)
@@ -18,18 +18,18 @@ async fn main() {
             Complex::from(0.0)
         }
     });
-    filter.connect_to_producer(&limiter);
+    filter.feed_from(&limiter);
     let volume = blocks::GainControl::new(0.5);
-    volume.connect_to_producer(&filter);
+    volume.feed_from(&filter);
     let audio_mod = blocks::FreqShifter::with_shift(700.0);
-    audio_mod.connect_to_producer(&volume);
+    audio_mod.feed_from(&volume);
     let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
-    playback.connect_to_producer(&audio_mod);
+    playback.feed_from(&audio_mod);
     /*
     let writer = blocks::io::raw::ContinuousF32BeWriter::new(std::io::BufWriter::new(
         std::fs::File::create("output.raw").unwrap(),
     ));
-    writer.connect_to_producer(&audio_mod);
+    writer.feed_from(&audio_mod);
     */
     let mut rl = rustyline::Editor::<()>::new().unwrap();
     loop {

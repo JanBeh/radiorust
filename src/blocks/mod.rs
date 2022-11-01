@@ -14,7 +14,7 @@
 //!
 //! There is no data structure describing the graph of connected blocks.
 //! Instead, any [`Producer<T>`] can be connected with any [`Consumer<T>`], see
-//! [`Producer::connect_to_consumer`] or [`Consumer::connect_to_producer`].
+//! [`Producer::feed_into`] or [`Consumer::feed_from`].
 //!
 //! Blocks will usually [`spawn`] a [task], and thus require an active
 //! [`tokio::runtime::Runtime`] while being created. The spawned task will
@@ -33,8 +33,8 @@
 //! [`Float`]: crate::numbers::Float
 //! [`Producer<T>`]: crate::flow::Producer
 //! [`Consumer<T>`]: crate::flow::Consumer
-//! [`Producer::connect_to_consumer`]: crate::flow::Producer::connect_to_consumer
-//! [`Consumer::connect_to_producer`]: crate::flow::Consumer::connect_to_producer
+//! [`Producer::feed_into`]: crate::flow::Producer::feed_into
+//! [`Consumer::feed_from`]: crate::flow::Consumer::feed_from
 //! [`spawn`]: tokio::task::spawn
 //! [task]: tokio::task
 //! [I/O blocks]: crate::blocks::io

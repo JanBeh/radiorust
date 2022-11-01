@@ -188,6 +188,79 @@ impl F32BeReader {
     }
 }
 
+/// Block acting as [`Consumer`], which uses a callback as sink
+///
+/// [`RecvError`]s are ignored by this block. Use [`ContinuousClosureSink`] if
+/// you need a guarantee that the received data is complete and without
+/// interruptions.
+pub struct ClosureSink<T> {
+    receiver_connector: ReceiverConnector<T>,
+    abort: watch::Sender<()>,
+    join_handle: JoinHandle<()>,
+}
+
+impl<T> Consumer<T> for ClosureSink<T>
+where
+    T: Clone,
+{
+    fn receiver_connector(&self) -> &ReceiverConnector<T> {
+        &self.receiver_connector
+    }
+}
+
+impl<T> ClosureSink<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    /// Create block which invokes the `process` closure for received data
+    pub fn new<F>(mut process: F) -> Self
+    where
+        F: FnMut(T) + Send + 'static,
+    {
+        Self::new_async(move |arg| ready(process(arg)))
+    }
+    /// Create block which invokes the `process` closure for received data and
+    /// `await`s its result
+    ///
+    /// This function is the same as [`ClosureSink::new`] but accepts an
+    /// asynchronously working closure.
+    pub fn new_async<F, R>(mut process: F) -> Self
+    where
+        F: FnMut(T) -> R + Send + 'static,
+        R: Future<Output = ()> + Send,
+    {
+        let (mut receiver, receiver_connector) = new_receiver::<T>();
+        let (abort_send, mut abort_recv) = watch::channel::<()>(());
+        let join_handle = spawn(async move {
+            loop {
+                select! {
+                    _ = abort_recv.changed() => return,
+                    result = receiver.recv() => {
+                        match result {
+                            Ok(data) => process(data).await,
+                            Err(RecvError::Closed) => return,
+                            _ => (),
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            receiver_connector,
+            abort: abort_send,
+            join_handle,
+        }
+    }
+    /// Stop operation
+    ///
+    /// This is effectively the same as dropping the block, but a panic in the
+    /// background task is propagated to the caller of `stop`.
+    pub async fn stop(self) {
+        drop(self.abort);
+        self.join_handle.await.expect("task panicked")
+    }
+}
+
 /// Error returned by [`ContinuousClosureSink::wait`] and
 /// [`ContinuousClosureSink::stop`]
 #[derive(Debug)]

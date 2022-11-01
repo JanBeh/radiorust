@@ -483,6 +483,21 @@ impl ContinuousF32BeWriter {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn test_closure_source_and_sink() {
+        let mut values = vec![19, 20, 5].into_iter();
+        let source = ClosureSource::<i32, ()>::new(move || Ok(values.next()));
+        let output1 = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+        let output2 = output1.clone();
+        let sink = ClosureSink::<i32>::new(move |value| {
+            let mut output_guard = output2.lock().unwrap();
+            output_guard.push(value);
+        });
+        sink.feed_from(&source);
+        sink.wait().await;
+        let output_guard = output1.lock().unwrap();
+        assert_eq!(&*output_guard, &[19, 20, 5]);
+    }
+    #[tokio::test]
     async fn test_closure_source_stop() {
         let mut values = vec![1, 2, 3].into_iter();
         let source = ClosureSource::<i32, ()>::new_async(move || {

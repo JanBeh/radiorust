@@ -23,6 +23,13 @@
 //! must be avoided. **Note:** [I/O blocks] are an exception to this rule: when
 //! they are dropped, they will stop working.
 //!
+//! Connecting a `Producer` to more than one `Consumer` at the same time will
+//! stall all involved blocks if one of the `Consumer`s is stalled; i.e. all
+//! `Consumer`s must process the data in order for the `Producer` to be able to
+//! send further data.
+//! Refer to the [`Buffer`] block for tweaking buffering behavior, including
+//! dropping data in case of congestion.
+//!
 //! [connected]: crate::flow
 //! [produce]: crate::flow::Producer
 //! [consume]: crate::flow::Consumer

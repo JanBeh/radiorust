@@ -13,6 +13,10 @@
 //! passed to a background task while the `ReceiverConnector` is stored and
 //! accessible through the [`Consumer::receiver_connector`] method.
 //!
+//! Note that feeding data into multiple `Consumer`s/`Receiver`s will block if
+//! one of the `Consumer`s blocks; i.e. all `Consumer`s/`Receiver`s must have
+//! received the data before more can be sent by the `Producer`/`Sender`.
+//!
 //! For each [`Sender`], there is a buffer capacity of `1` (see underlying
 //! [`broadcast_bp`] channel). Thus a chain of [blocks] may accumulate a
 //! significant buffer volume. This may be unwanted and can be handled by

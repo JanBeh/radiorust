@@ -80,11 +80,16 @@ where
             join_handle,
         }
     }
+    /// Consume the block but continue operation as long as there are connected
+    /// [`Consumer`]s
+    pub fn detach(self) {
+        spawn(self.wait());
+    }
     /// Wait for stream to finish
     ///
     /// Returns `Ok(true)` if `retrieve` closure passed to [`new`] returned
     /// [`None`] to indicate completion.
-    /// Returns `Ok(false)` if the last consumer was disconnected before
+    /// Returns `Ok(false)` if the last [`Consumer`] was disconnected before
     /// completion.
     /// Returns `Err` if `retrieve` closure reported an error.
     ///
@@ -165,10 +170,15 @@ impl F32BeReader {
             BufReader::new(File::create(path).expect("could not open file for source")),
         )
     }
+    /// Consume the block but continue operation as long as there are connected
+    /// [`Consumer`]s
+    pub fn detach(self) {
+        spawn(self.wait());
+    }
     /// Wait for stream to finish
     ///
     /// Returns `Ok(true)` if `reader` passed to [`new`] reported EOF.
-    /// Returns `Ok(false)` if the last consumer was disconnected before
+    /// Returns `Ok(false)` if the last [`Consumer`] was disconnected before
     /// completion.
     /// Returns `Err` in case of an I/O error.
     ///
@@ -250,6 +260,16 @@ where
             abort: abort_send,
             join_handle,
         }
+    }
+    /// Consume the block but continue operation as long as there is a
+    /// connected [`Producer`]
+    pub fn detach(self) {
+        spawn(self.wait());
+    }
+    /// Wait as long as there is a connected [`Producer`]
+    pub async fn wait(self) {
+        drop(self.receiver_connector);
+        self.join_handle.await.expect("task panicked")
     }
     /// Stop operation
     ///
@@ -359,6 +379,11 @@ where
             Err(_) => panic!("task panicked"),
         }
     }
+    /// Consume the block but continue operation until interruption or
+    /// completion
+    pub fn detach(self) {
+        spawn(self.wait());
+    }
     /// Wait for stream to finish
     ///
     /// Returns `Ok(true)` if connected [`Producer`] indicated completion
@@ -429,6 +454,11 @@ impl ContinuousF32BeWriter {
             ContinuousClosureSinkError::Reset => ContinuousWriterError::Reset,
             ContinuousClosureSinkError::Report(rpt) => ContinuousWriterError::Io(rpt),
         }
+    }
+    /// Consume the block but continue operation until interruption or
+    /// completion
+    pub fn detach(self) {
+        self.inner.detach();
     }
     /// Wait for stream to finish
     ///

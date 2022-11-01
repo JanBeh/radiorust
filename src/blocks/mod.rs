@@ -20,8 +20,8 @@
 //! [`tokio::runtime::Runtime`] while being created. The spawned task will
 //! usually keep working even if a block gets dropped as long as there is a
 //! connected [`Producer`] and a connected [`Consumer`]. Thus creating circles
-//! must be avoided. [I/O blocks] are an exception to this rule: when they are
-//! dropped, they will stop working.
+//! must be avoided. **Note:** [I/O blocks] are an exception to this rule: when
+//! they are dropped, they will stop working.
 //!
 //! [connected]: crate::flow
 //! [produce]: crate::flow::Producer

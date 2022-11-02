@@ -8,7 +8,7 @@ use crate::samples::*;
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 use tokio::sync::oneshot;
 
-pub use cpal::{Device, Host};
+pub use cpal::Device;
 
 use std::error::Error;
 

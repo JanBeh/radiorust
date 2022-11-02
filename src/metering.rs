@@ -118,12 +118,7 @@ where
 mod tests {
     use super::*;
     use crate::bufferpool::*;
-    const PRECISION: f64 = 1e-10;
-    fn assert_approx(a: f64, b: f64) {
-        if !((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION) {
-            panic!("{a} and {b} are not approximately equal");
-        }
-    }
+    use crate::tests::assert_approx;
     #[test]
     fn test_level_complex_osc() {
         const SQRT_HALF: f64 = 1.0 / std::f64::consts::SQRT_2;

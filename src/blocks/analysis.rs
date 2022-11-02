@@ -144,12 +144,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    const PRECISION: f64 = 1e-10;
-    pub fn assert_approx(a: f64, b: f64) {
-        if !((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION) {
-            panic!("{a} and {b} are not approximately equal");
-        }
-    }
+    use crate::tests::assert_approx;
     #[tokio::test]
     async fn test_fourier() {
         let (sender, sender_connector) = new_sender();
@@ -166,10 +161,13 @@ mod tests {
         chunk_buf.push(Complex::new(1.0, 0.0));
         chunk_buf.push(Complex::new(1.0, 0.0));
         chunk_buf.push(Complex::new(1.0, 0.0));
-        sender.send(Samples {
-            sample_rate: 48000.0,
-            chunk: chunk_buf.finalize(),
-        }).await.unwrap();
+        sender
+            .send(Samples {
+                sample_rate: 48000.0,
+                chunk: chunk_buf.finalize(),
+            })
+            .await
+            .unwrap();
         let output1 = receiver1.recv().await.unwrap();
         let output2 = receiver2.recv().await.unwrap();
         assert_approx(output1.chunk[0].re, 3.0);
@@ -189,10 +187,13 @@ mod tests {
         chunk_buf.push(Complex::new(1.5, 0.0));
         chunk_buf.push(Complex::new(1.0, 0.0));
         chunk_buf.push(Complex::new(0.5, 0.0));
-        sender.send(Samples {
-            sample_rate: 48000.0,
-            chunk: chunk_buf.finalize(),
-        }).await.unwrap();
+        sender
+            .send(Samples {
+                sample_rate: 48000.0,
+                chunk: chunk_buf.finalize(),
+            })
+            .await
+            .unwrap();
         let output1 = receiver1.recv().await.unwrap();
         let output2 = receiver2.recv().await.unwrap();
         assert_approx(output1.chunk[0].re, 4.0);

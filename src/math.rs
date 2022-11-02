@@ -52,12 +52,7 @@ pub fn sinc<Flt: Float>(x: Flt) -> Flt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const PRECISION: f64 = 1e-10;
-    fn assert_approx(a: f64, b: f64) {
-        if !((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION) {
-            panic!("{a} and {b} are not approximately equal");
-        }
-    }
+    use crate::tests::assert_approx;
     #[test]
     #[allow(non_snake_case)]
     fn test_bessel_I0() {

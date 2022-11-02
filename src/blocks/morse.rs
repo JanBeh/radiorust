@@ -416,12 +416,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    const PRECISION: f64 = 1e-10;
-    fn assert_approx(a: f64, b: f64) {
-        if !((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION) {
-            panic!("{a} and {b} are not approximately equal");
-        }
-    }
+    use crate::tests::assert_approx;
     #[test]
     fn test_morse_speed_type() {
         let speed = Speed::from_paris_wpm(16.0);

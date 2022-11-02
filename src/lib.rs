@@ -49,3 +49,13 @@ pub mod prelude;
 pub mod samples;
 pub mod sync;
 pub mod windowing;
+
+#[cfg(test)]
+mod tests {
+    const PRECISION: f64 = 1e-10;
+    pub(crate) fn assert_approx(a: f64, b: f64) {
+        if !((a - b).abs() <= PRECISION || (a / b).ln().abs() <= PRECISION) {
+            panic!("{a} and {b} are not approximately equal");
+        }
+    }
+}

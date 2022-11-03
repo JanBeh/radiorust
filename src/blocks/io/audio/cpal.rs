@@ -125,6 +125,10 @@ impl AudioPlayer {
         Ok(())
     }
     /// Wait for played back stream to finish
+    ///
+    /// Awaiting this function will stop the playback as soon as the stream has
+    /// been interrupted ([`RecvError::Reset`]) or the end of stream has been
+    /// signalled ([`RecvError::Finished`]), even if more data might arrive.
     pub async fn wait(self) -> Result<(), Box<dyn Error>> {
         match self.completion.await? {
             RecvError::Finished => Ok(()),

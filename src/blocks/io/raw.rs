@@ -120,7 +120,7 @@ impl Producer<Samples<Complex<f32>>> for F32BeReader {
 }
 
 impl F32BeReader {
-    /// Create `F32BeReader`, which reads samples from the given `writer`
+    /// Create `F32BeReader`, which reads samples from the given `reader`
     ///
     /// The produced [`Chunk`]s always have a length of `chunk_len`. If the
     /// `reader` reports EOF in the middle of a chunk or in the middle of a

@@ -464,7 +464,7 @@ pub trait Producer<T> {
             .connect(self.sender_connector());
     }
     /// Connect `Producer` to [`Consumer`]
-    #[deprecated(note = "method has been renamed to `feed_into`")]
+    #[deprecated(since = "0.2.0", note = "method has been renamed to `feed_into`")]
     fn connect_to_consumer<C: Consumer<T>>(&self, consumer: &C) {
         self.feed_into(consumer)
     }
@@ -494,12 +494,12 @@ pub trait Consumer<T> {
         self.receiver_connector().disconnect();
     }
     /// Connect `Consumer` to [`Producer`]
-    #[deprecated(note = "method has been renamed to `feed_from`")]
+    #[deprecated(since = "0.2.0", note = "method has been renamed to `feed_from`")]
     fn connect_to_producer<P: Producer<T>>(&self, producer: &P) {
         self.feed_from(producer)
     }
     /// Disconnect `Consumer` from any connected [`Producer`] if connected
-    #[deprecated(note = "method has been renamed to `feed_from_none`")]
+    #[deprecated(since = "0.2.0", note = "method has been renamed to `feed_from_none`")]
     fn disconnect_from_producer(&self) {
         self.feed_from_none()
     }

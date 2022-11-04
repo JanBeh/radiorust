@@ -13,7 +13,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-/// Error returned by [`Sender::send`] if there are no subscribers or receivers
+/// Error returned by [`Sender::send`] if there are no [`Enlister`]s or
+/// [`Receiver`]s
 pub struct SendError<T>(
     /// The value that could not be sent
     pub T,
@@ -23,7 +24,7 @@ impl<T> fmt::Display for SendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "sending to broadcast channel failed (no subscribers or receivers)"
+            "sending to broadcast channel failed (no enlisters or receivers)"
         )
     }
 }
@@ -36,8 +37,8 @@ impl<T> fmt::Debug for SendError<T> {
 
 impl<T> Error for SendError<T> {}
 
-/// Error returned by [`Sender::reserve`] if there are no subscribers or
-/// receivers
+/// Error returned by [`Sender::reserve`] if there are no [`Enlister`]s or
+/// [`Receiver`]s
 #[derive(Debug)]
 pub struct RsrvError;
 
@@ -45,7 +46,7 @@ impl fmt::Display for RsrvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "preparing sending to broadcast channel failed (no subscribers or receivers)"
+            "preparing sending to broadcast channel failed (no enlisters or receivers)"
         )
     }
 }
@@ -87,7 +88,7 @@ struct Synced<T> {
     data: Option<T>,
     slot: Slot,
     sndr_count: usize,
-    subs_count: usize,
+    elst_count: usize,
     rcvr_count: usize,
     unseen: usize,
 }
@@ -153,7 +154,7 @@ impl<T> Clone for Sender<T> {
 impl<T> Clone for Enlister<T> {
     fn clone(&self) -> Self {
         let mut synced = self.shared.synced.lock();
-        synced.subs_count = synced.subs_count.checked_add(1).unwrap();
+        synced.elst_count = synced.elst_count.checked_add(1).unwrap();
         drop(synced);
         Self {
             shared: self.shared.clone(),
@@ -180,8 +181,8 @@ impl<T> Drop for Sender<T> {
 impl<T> Drop for Enlister<T> {
     fn drop(&mut self) {
         let mut synced = self.shared.synced.lock();
-        synced.subs_count -= 1;
-        if synced.subs_count == 0 && synced.rcvr_count == 0 {
+        synced.elst_count -= 1;
+        if synced.elst_count == 0 && synced.rcvr_count == 0 {
             self.shared.notify_sndr.notify_waiters();
         }
     }
@@ -191,7 +192,7 @@ impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         let mut synced = self.shared.synced.lock();
         synced.rcvr_count -= 1;
-        let mut notify = synced.rcvr_count == 0 && synced.subs_count == 0;
+        let mut notify = synced.rcvr_count == 0 && synced.elst_count == 0;
         if self.slot != synced.slot {
             synced.unseen -= 1;
             if synced.unseen == 0 {
@@ -211,7 +212,7 @@ pub fn channel<T>() -> (Sender<T>, Enlister<T>) {
             data: None,
             slot: Slot::new(),
             sndr_count: 1,
-            subs_count: 1,
+            elst_count: 1,
             rcvr_count: 0,
             unseen: 0,
         }),
@@ -234,7 +235,7 @@ impl<T> Sender<T> {
                 if synced.unseen == 0 && synced.rcvr_count > 0 {
                     break synced;
                 }
-                if synced.subs_count == 0 && synced.rcvr_count == 0 {
+                if synced.elst_count == 0 && synced.rcvr_count == 0 {
                     return Err(RsrvError);
                 }
                 self.shared.notify_sndr.notified()
@@ -260,7 +261,7 @@ impl<T> Sender<T> {
                 shared: &self.shared,
                 synced,
             }))
-        } else if synced.subs_count == 0 && synced.rcvr_count == 0 {
+        } else if synced.elst_count == 0 && synced.rcvr_count == 0 {
             Err(RsrvError)
         } else {
             Ok(None)
@@ -336,11 +337,11 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_broadcast() {
-        let (sender, subscriber) = channel::<i32>();
-        let mut rcvr1 = subscriber.subscribe();
-        let mut rcvr2 = subscriber.subscribe();
+        let (sender, enlister) = channel::<i32>();
+        let mut rcvr1 = enlister.subscribe();
+        let mut rcvr2 = enlister.subscribe();
         let mut rcvr3 = rcvr2.clone();
-        drop(subscriber);
+        drop(enlister);
         let (_, vec1, vec2, vec3) = tokio::join!(
             async move {
                 sender.send(1).await.unwrap();

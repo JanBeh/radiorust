@@ -113,6 +113,9 @@ pub struct Enlister<T> {
 }
 
 /// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
+///
+/// This type is `!Send`. If you require this to be [`Send`], use the
+/// `send_reservation` feature.
 #[derive(Debug)]
 pub struct Reservation<'a, T> {
     shared: &'a Shared<T>,
@@ -335,6 +338,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[cfg(feature = "send_reservation")]
+    async fn test_reservation_sendable() {
+        let (sender, enlister) = channel::<i32>();
+        let _receiver = enlister.subscribe();
+        fn takes_send<T: Send>(_: T) {}
+        takes_send(sender.reserve().await.unwrap());
+    }
     #[tokio::test]
     async fn test_broadcast() {
         let (sender, enlister) = channel::<i32>();

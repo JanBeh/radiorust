@@ -12,6 +12,7 @@ keywords = ["sdr", "radio"]
 full-io = ["cpal", "soapysdr"]
 cpal = ["dep:cpal"]
 soapysdr = ["dep:soapysdr"]
+send_reservation = ["parking_lot/send_guard"]
 
 [dependencies]
 soapysdr = { version = "0.3.2", optional = true }

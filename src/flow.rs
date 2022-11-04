@@ -168,6 +168,9 @@ impl<T> Clone for Sender<T> {
 }
 
 /// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
+///
+/// This type is `!Send`. If you require this to be [`Send`], use the
+/// `send_reservation` feature.
 #[derive(Debug)]
 pub struct Reservation<'a, T> {
     inner_reservation: broadcast_bp::Reservation<'a, Message<T>>,
@@ -508,5 +511,25 @@ pub trait Consumer<T> {
 impl<T> Consumer<T> for ReceiverConnector<T> {
     fn receiver_connector(&self) -> &ReceiverConnector<T> {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    #[cfg(feature = "send_reservation")]
+    async fn test_reservation_sendable() {
+        use super::*;
+        use tokio::task::spawn;
+        let (sender, sender_connector) = new_sender::<i32>();
+        let (mut receiver, receiver_connector) = new_receiver::<i32>();
+        sender_connector.feed_into(&receiver_connector);
+        // `broadcast_bp::Receiver` may not have been created yet, so we need
+        // this to avoid deadlocking:
+        spawn(async move {
+            receiver.recv().await.ok();
+        });
+        fn takes_send<T: Send>(_: T) {}
+        takes_send(sender.reserve().await.unwrap());
     }
 }

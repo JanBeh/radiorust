@@ -29,6 +29,16 @@ relm4-macros = { version = "0.4.4" }
 clap = { version = "4.0.17", features = ["derive"] }
 rustyline = "10.0.0"
 
+[profile.dev]
+debug-assertions = false
+overflow-checks = false
+opt-level = 3
+
+[profile.test]
+debug-assertions = true
+overflow-checks = true
+opt-level = 0
+
 [[example]]
 name = "relm_app"
 required-features = ["cpal", "soapysdr"]

@@ -160,6 +160,7 @@ where
                     Fill(Message<T>),
                     Drain(Reservation<'a, T>),
                     Close,
+                    Exit,
                 }
                 match select! {
                     action = async {
@@ -181,7 +182,7 @@ where
                         }
                         match sender.reserve().await {
                             Ok(reservation) => Action::Drain(reservation),
-                            Err(_) => Action::Close,
+                            Err(_) => Action::Exit,
                         }
                     } => action,
                 } {
@@ -249,7 +250,11 @@ where
                             }
                         }
                     }
-                    Action::Close => closed = true,
+                    Action::Close => {
+                        closed = true;
+                        underrun = false;
+                    }
+                    Action::Exit => return,
                 }
             }
         });

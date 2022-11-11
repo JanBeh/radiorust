@@ -57,6 +57,7 @@ macro_rules! flt {
         <Flt as ::num::traits::NumCast>::from($x).expect("could not convert number into float")
     };
 }
+pub use flt;
 
 #[cfg(test)]
 mod tests {

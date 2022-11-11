@@ -1,6 +1,5 @@
 //! Metering (e.g. level or bandwidth measurement)
 
-use crate::flt;
 use crate::numbers::*;
 
 /// Calculate mean square norm

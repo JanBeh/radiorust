@@ -1,7 +1,6 @@
 //! Mathematic functions helpful for signal processing
 
-use crate::flt;
-use crate::numbers::Float;
+use crate::numbers::*;
 
 /// Modified Bessel function of the first kind of order zero
 #[allow(non_snake_case)]

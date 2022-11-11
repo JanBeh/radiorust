@@ -4,8 +4,9 @@
 
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::impl_block_trait;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 
 use tokio::sync::{mpsc, watch};
 use tokio::task::spawn;
@@ -13,6 +14,19 @@ use tokio::task::spawn;
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
+
+/// Types used as [`Signal::Event::payload`]
+pub mod events {
+    /// Sent by [`Keyer`] block as [`Signal::event::payload`] when all morse
+    /// messages have been sent.
+    ///
+    /// [`Keyer`]: super::Keyer
+    /// [`Signal::event::payload`]: crate::signal::Signal::Event::payload
+    #[derive(Clone, Debug)]
+    pub struct EndOfMessages;
+}
+use events::*;
 
 /// Morse speed
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -254,29 +268,23 @@ pub fn encode(text: &str) -> Result<Vec<Unit>, EncodeError> {
 ///
 /// If not dropped, the keyer will send silence unless a message has been
 /// queued using [`Keyer::send`]. On drop, message queue is emptied before
-/// sending is stopped. After all messages have been completed, an end of
-/// stream is indicated through [`Sender::finish`] ([`RecvError::Finished`]).
+/// sending is stopped. After all messages have been completed, a
+/// [`Signal::Event`] with [`EndOfMessages`] as [`payload`] is sent.
+///
+/// [`payload`]: Signal::Event::payload
 pub struct Keyer<Flt> {
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     speed: watch::Sender<Speed>,
     messages: mpsc::UnboundedSender<Vec<Unit>>,
 }
 
-impl<Flt> Producer<Samples<Complex<Flt>>> for Keyer<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for Keyer<Flt> }
 
 impl<Flt> Keyer<Flt>
 where
     Flt: Float,
 {
     /// Generate new `Keyer` block without initial message
-    ///
-    /// The block will indicate an end of stream through [`Sender::finish`]
-    /// ([`RecvError::Finished`]) before sending silence to avoid endless
-    /// consumption of silence by certain [I/O blocks].
     ///
     /// [I/O blocks]: crate::blocks::io
     pub fn new(chunk_len: usize, sample_rate: f64, speed: Speed) -> Self {
@@ -302,7 +310,7 @@ where
         speed: Speed,
         message: Option<Vec<Unit>>,
     ) -> Self {
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (speed_send, mut speed_recv) = watch::channel(speed);
         let (messages_send, mut messages_recv) = mpsc::unbounded_channel::<Vec<Unit>>();
         if let Some(message) = message {
@@ -345,15 +353,11 @@ where
                                 Flt::zero()
                             }));
                             if output_chunk.len() >= chunk_len {
-                                if let Err(_) = sender
-                                    .send(Samples {
-                                        sample_rate,
-                                        chunk: output_chunk.finalize(),
-                                    })
-                                    .await
-                                {
-                                    return;
-                                }
+                                let Ok(()) = sender.send(Signal::Samples {
+                                    sample_rate,
+                                    chunk: output_chunk.finalize(),
+                                }).await
+                                else { return; };
                                 output_chunk = buf_pool.get_with_capacity(chunk_len);
                             }
                             remaining_samples -= 1;
@@ -364,31 +368,25 @@ where
                             while output_chunk.len() < chunk_len {
                                 output_chunk.push(Complex::from(Flt::zero()));
                             }
-                            if let Err(_) = sender
-                                .send(Samples {
-                                    sample_rate,
-                                    chunk: output_chunk.finalize(),
-                                })
-                                .await
-                            {
-                                return;
-                            }
+                            let Ok(()) = sender.send(Signal::Samples {
+                                sample_rate,
+                                chunk: output_chunk.finalize(),
+                            }).await
+                            else { return; };
                             output_chunk = buf_pool.get_with_capacity(chunk_len);
                         }
                         if idle {
-                            if let Err(_) = sender
-                                .send(Samples {
-                                    sample_rate,
-                                    chunk: empty_chunk.clone(),
-                                })
-                                .await
-                            {
-                                return;
-                            }
+                            let Ok(()) = sender.send(Signal::Samples {
+                                sample_rate,
+                                chunk: empty_chunk.clone(),
+                            }).await
+                            else { return; };
                         } else {
-                            if let Err(_) = sender.finish().await {
-                                return;
-                            }
+                            let Ok(()) = sender.send(Signal::Event {
+                                interrupt: false,
+                                payload: Arc::new(EndOfMessages),
+                            }).await
+                            else { return; };
                             idle = true;
                         }
                     }

@@ -3,30 +3,22 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
+use crate::impl_block_trait;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 
 use tokio::sync::watch;
 use tokio::task::spawn;
 
 /// FM modulator block
 pub struct FmMod<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     deviation: watch::Sender<f64>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for FmMod<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for FmMod<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for FmMod<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for FmMod<Flt> }
 
 impl<Flt> FmMod<Flt>
 where
@@ -35,18 +27,19 @@ where
     /// Create new FM modulator with given frequency deviation in hertz
     pub fn new(mut deviation: f64) -> Self {
         use std::f64::consts::TAU;
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (deviation_send, mut deviation_recv) = watch::channel(deviation);
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut current_phase: Flt = Flt::zero();
         spawn(async move {
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         if deviation_recv.has_changed().unwrap_or(false) {
                             deviation = deviation_recv.borrow_and_update().clone();
                         }
@@ -58,23 +51,14 @@ where
                             let (im, re) = current_phase.sin_cos();
                             output_chunk.push(Complex::<Flt>::new(re, im));
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate,
-                                chunk: output_chunk.finalize(),
-                            })
-                            .await
-                        {
-                            return;
-                        }
+                        let Ok(()) = sender.send(Signal::Samples {
+                            sample_rate,
+                            chunk: output_chunk.finalize(),
+                        }).await
+                        else { return; };
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }
@@ -98,22 +82,13 @@ where
 
 /// FM demodulator block
 pub struct FmDemod<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     deviation: watch::Sender<f64>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for FmDemod<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for FmDemod<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for FmDemod<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for FmDemod<Flt> }
 
 impl<Flt> FmDemod<Flt>
 where
@@ -122,19 +97,20 @@ where
     /// Create new FM demodulator with given frequency deviation in hertz
     pub fn new(mut deviation: f64) -> Self {
         use std::f64::consts::TAU;
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (deviation_send, mut deviation_recv) = watch::channel(deviation);
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut previous_sample: Option<Complex<Flt>> = None;
         let mut output_sample = Complex::<Flt>::from(Flt::zero());
         spawn(async move {
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         if deviation_recv.has_changed().unwrap_or(false) {
                             deviation = deviation_recv.borrow_and_update().clone();
                         }
@@ -149,24 +125,18 @@ where
                             output_chunk.push(output_sample);
                             previous_sample = Some(sample);
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate,
-                                chunk: output_chunk.finalize(),
-                            })
-                            .await
-                        {
-                            return;
-                        }
+                        let Ok(()) = sender.send(Signal::Samples {
+                            sample_rate,
+                            chunk: output_chunk.finalize(),
+                        }).await
+                        else { return; };
                     }
-                    Err(err) => {
-                        previous_sample = None;
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
+                    Signal::Event { interrupt, payload } => {
+                        if interrupt {
+                            previous_sample = None;
                         }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                        let Ok(()) = sender.send(Signal::Event { interrupt, payload }).await
+                        else { return; };
                     }
                 }
             }

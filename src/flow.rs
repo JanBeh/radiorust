@@ -1,305 +1,102 @@
-//! Data flow between [blocks]
+//! Data flow between [signal processing blocks]
 //!
-//! Signal processing blocks implement the [`Producer`] trait, the [`Consumer`]
-//! trait, or both traits.
+//! [signal processing blocks]: crate::blocks
+//!
+//! # Overview
+//!
+//! This module provides an extension to the [`broadcast_bp`] channel.
+//! Like `broadcast_bp`, a type argument `T` is used to select the type of the
+//! passed values. However, only types which implement the [`Message`] trait
+//! can be used by this module.
+//!
+//! Opposed to `broadcast_bp`, this module allows [`Receiver`]s to be
+//! (re-)connected to different [`Sender`]s after creation and use.
+//! For that, each `Sender` has an associated [`SenderConnector`] and each
+//! `Receiver` has an associated [`ReceiverConnector`]. The connectors provide
+//! methods to (re-)connect their associated `Sender`s and `Receiver`s.
+//!
+//! Moreover, two traits [`Producer`] and [`Consumer`] are provided, which
+//! describe data types that produce or consume data using a background task
+//! and which contain a `SenderConnector` or `ReceiverConnector`, respectively,
+//! such that it's possible to connect `Producer`s and `Consumer`s with each
+//! other.
+//!
+//! Upon disconnection, a special value is optionally inserted into the stream
+//! of received values. This value is determined by the
+//! [`Message::disconnection`] method.
+//!
+//! # Implementing a `Producer` or `Consumer`
 //!
 //! Upon creation, `Producer`s use the [`new_sender`] function to create a pair
-//! consisting of a [`Sender`] and a [`SenderConnector`]. The `Sender` is
-//! passed to a background task while the `SenderConnector` is stored and
-//! accessible through the [`Producer::sender_connector`] method.
+//! consisting of a `Sender` and a `SenderConnector`. The `Sender` is passed to
+//! a background task while the `SenderConnector` is stored and accessible
+//! through the [`Producer::sender_connector`] method.
 //!
 //! `Consumers` use the [`new_receiver`] function upon creation to create a
-//! pair of a [`Receiver`] and a [`ReceiverConnector`]. The `Receiver` is
-//! passed to a background task while the `ReceiverConnector` is stored and
-//! accessible through the [`Consumer::receiver_connector`] method.
+//! pair of a `Receiver` and a `ReceiverConnector`. The `Receiver` is passed to
+//! a background task while the `ReceiverConnector` is stored and accessible
+//! through the [`Consumer::receiver_connector`] method.
 //!
-//! Note that feeding data into multiple `Consumer`s/`Receiver`s will block if
-//! one of the `Consumer`s blocks; i.e. all `Consumer`s/`Receiver`s must have
-//! received the data before more can be sent by the `Producer`/`Sender`.
+//! Refer to the source code of the [`Nop`] block for an example.
 //!
-//! For each [`Sender`], there is a buffer capacity of `1` (see underlying
-//! [`broadcast_bp`] channel). Thus a chain of [blocks] may accumulate a
-//! significant buffer volume. This may be unwanted and can be handled by
-//! placing a [`blocks::buffering::Buffer`] block near the end of the chain.
+//! [`Nop`]: crate::blocks::Nop
 //!
-//! [blocks]: crate::blocks
-//! [`blocks::buffering::Buffer`]: crate::blocks::buffering::Buffer
+//! # Buffering and Congestion
 //!
-//! # Example
+//! Connecting a `Producer` to more than one `Consumer` at the same time will
+//! stall all involved blocks if one of the `Consumer`s is stalled; i.e. all
+//! `Consumer`s must process the data in order for the `Producer` to be able to
+//! send further data.
 //!
-//! The following toy example passes a `String` from a [`Producer`] to a
-//! [`Consumer`]. For radio applications, you will usually pass [`Samples`]
-//! instead.
+//! There is a buffer capacity of `1` for each `Sender`/`Producer`. Because of
+//! this, longer chains may lead to a significant buffer volume.
 //!
-//! [`Samples`]: crate::samples::Samples
+//! The [`blocks`] module uses the [`Buffer`] block for tweaking buffering
+//! behavior, including dropping data in case of congestion and countermeasures
+//! against latency.
 //!
-//! ```
-//! # tokio::runtime::Runtime::new().unwrap().block_on(async move {
-//! use radiorust::flow::*;
-//! use tokio::sync::oneshot;
-//! use tokio::task::spawn;
-//!
-//! struct MySource {
-//!     sender_connector: SenderConnector<String>,
-//!     /* extra fields can go here */
-//! }
-//! impl MySource {
-//!     fn new() -> Self {
-//!         let (sender, sender_connector) = new_sender::<String>();
-//!         spawn(async move {
-//!             sender.send("Hello World!".to_string()).await;
-//!         });
-//!         Self { sender_connector }
-//!     }
-//! }
-//! impl Producer<String> for MySource {
-//!     fn sender_connector(&self) -> &SenderConnector<String> {
-//!         &self.sender_connector
-//!     }
-//! }
-//!
-//! struct MySink {
-//!     receiver_connector: ReceiverConnector<String>,
-//!     finish: oneshot::Receiver<()>,
-//!     /* extra fields can go here */
-//! }
-//! impl MySink {
-//!     fn new() -> Self {
-//!         let (mut receiver, receiver_connector) = new_receiver::<String>();
-//!         let (finish_send, finish_recv) = oneshot::channel::<()>();
-//!         spawn(async move {
-//!             assert_eq!(receiver.recv().await.unwrap(), "Hello World!".to_string());
-//!             finish_send.send(());
-//!         });
-//!         Self { receiver_connector, finish: finish_recv }
-//!     }
-//!     async fn wait(self) {
-//!         self.finish.await.unwrap();
-//!     }
-//! }
-//! impl Consumer<String> for MySink {
-//!     fn receiver_connector(&self) -> &ReceiverConnector<String> {
-//!         &self.receiver_connector
-//!     }
-//! }
-//!
-//! let source = MySource::new();
-//! let sink = MySink::new();
-//! sink.feed_from(&source);
-//!
-//! sink.wait().await;
-//! # });
-//! ```
-//!
-//! [blocks]: crate::blocks
+//! [`blocks`]: crate::blocks
+//! [`Buffer`]: crate::blocks::buffering::Buffer
 
 use crate::sync::broadcast_bp;
 
 use tokio::select;
 use tokio::sync::watch;
 
-use std::error::Error;
-use std::fmt;
 use std::future::pending;
 
-pub use broadcast_bp::{RsrvError, SendError};
+pub use crate::sync::broadcast_bp::{
+    channel as new_sender, Enlister as SenderConnector, RecvError, Reservation, RsrvError,
+    SendError, Sender,
+};
 
-#[derive(Clone, Debug)]
-enum Message<T> {
-    Value(T),
-    Reset,
-    Finished,
+/// Types that can be used as message from [`Sender`] to [`Receiver`]
+pub trait Message: Sized + Clone {
+    /// Return message that indicates disconnection or `None` if not
+    /// supported
+    fn disconnection() -> Option<Self>;
 }
 
-/// Error value returned by [`Receiver::recv`]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum RecvError {
-    /// Some values may have been lost or the data stream is interrupted;
-    /// more/new data may be received in the future.
-    Reset,
-    /// The data stream has been completed; more/new data may be received in
-    /// the future. This error is also used by blocks which have no data to
-    /// send yet, prior to sending silence.
-    Finished,
-    /// No more data can be received and the [`ReceiverConnector`] has been
-    /// dropped.
-    Closed,
-}
+/// Wrapper implementing [`Message`], which doesn't provide a value that
+/// indicates disconnection
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct SimpleMessage<T>(T);
 
-impl fmt::Display for RecvError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RecvError::Reset => write!(f, "data stream interrupted"),
-            RecvError::Finished => write!(f, "data stream completed"),
-            RecvError::Closed => write!(f, "data stream closed"),
-        }
+impl<T> Message for SimpleMessage<T>
+where
+    T: Clone,
+{
+    fn disconnection() -> Option<Self> {
+        None
     }
 }
 
-impl Error for RecvError {}
-
-/// Sender that can be dynamically connected to a [`Receiver`]
+/// Unit struct indicating a disconnection
 ///
-/// To send data to the connected `Receiver`s, use [`Sender::send`]. Call
-/// [`Sender::reset`] to indicate missing data and [`Sender::finish`] to
-/// indicate end of stream.
-///
-/// Connecting the `Sender` to a `Receiver` is done by passing a
-/// [`SenderConnector`] reference to [`ReceiverConnector::connect`].
-/// The `SenderConnector` is obtained when calling [`new_sender`].
-///
-/// There is buffer capacity of `1` for each `Sender`, i.e. `Sender::send`
-/// completes immediately for the first value sent or after all `Receiver`s
-/// have received the previous value.
-/// (Note: In some cases, `Sender::send` may wait until receiving is attempted
-/// by one `Receiver`. This is because the [`broadcast_bp::Sender`] might not
-/// see a [`broadcast_bp::Receiver`] as subscriber yet.)
-#[derive(Debug)]
-pub struct Sender<T> {
-    inner_sender: broadcast_bp::Sender<Message<T>>,
-}
-
-impl<T> Clone for Sender<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner_sender: self.inner_sender.clone(),
-        }
-    }
-}
-
-/// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
-///
-/// This type is `!Send`. If you require this to be [`Send`], use the
-/// `send_reservation` feature.
-#[derive(Debug)]
-pub struct Reservation<'a, T> {
-    inner_reservation: broadcast_bp::Reservation<'a, Message<T>>,
-}
-
-/// Handle to connect a [`Sender`] to a [`Receiver`]
-///
-/// A `SenderConnector` can be obtained by calling [`new_sender`].
-/// A reference to a `SenderConnector` can be passed to
-/// [`ReceiverConnector::connect`] to connect the associated `Sender` to the
-/// associated `Receiver`.
-#[derive(Debug)]
-pub struct SenderConnector<T> {
-    inner_enlister: broadcast_bp::Enlister<Message<T>>,
-}
-
-impl<T> Clone for SenderConnector<T> {
-    fn clone(&self) -> Self {
-        Self {
-            inner_enlister: self.inner_enlister.clone(),
-        }
-    }
-}
-
-/// Create a [`Sender`] with an associated [`SenderConnector`]
-pub fn new_sender<T>() -> (Sender<T>, SenderConnector<T>) {
-    let (inner_sender, inner_enlister) = broadcast_bp::channel();
-    (Sender { inner_sender }, SenderConnector { inner_enlister })
-}
-
-impl<T> Sender<T> {
-    /// Wait until ready to send
-    ///
-    /// The returned [`Reservation`] handle may be used to send a value
-    /// immediately (through [`Reservation::send`], which is not `async`).
-    pub async fn reserve(&self) -> Result<Reservation<'_, T>, RsrvError> {
-        Ok(Reservation {
-            inner_reservation: self.inner_sender.reserve().await?,
-        })
-    }
-    /// Check if ready to send
-    ///
-    /// The returned [`Reservation`] handle may be used to send a value
-    /// immediately (through [`Reservation::send`], which is not `async`).
-    ///
-    /// This method returns `Ok(None)` if it's not possible to send a value
-    /// immediately.
-    pub fn try_reserve(&self) -> Result<Option<Reservation<'_, T>>, RsrvError> {
-        Ok(self
-            .inner_sender
-            .try_reserve()?
-            .map(|inner_reservation| Reservation { inner_reservation }))
-    }
-    /// Send data to all [`Receiver`]s which have been [connected]
-    ///
-    /// [connected]: ReceiverConnector::connect
-    pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
-        match self.reserve().await {
-            Ok(reservation) => {
-                reservation.send(value);
-                Ok(())
-            }
-            Err(RsrvError) => Err(SendError(value)),
-        }
-    }
-    /// Notify all [`Receiver`]s that some data is missing or that the data
-    /// stream has been restarted
-    pub async fn reset(&self) -> Result<(), SendError<()>> {
-        match self.reserve().await {
-            Ok(reservation) => {
-                reservation.reset();
-                Ok(())
-            }
-            Err(RsrvError) => Err(SendError(())),
-        }
-    }
-    /// Notify all [`Receiver`]s that the data stream has been completed
-    pub async fn finish(&self) -> Result<(), SendError<()>> {
-        match self.reserve().await {
-            Ok(reservation) => {
-                reservation.finish();
-                Ok(())
-            }
-            Err(RsrvError) => Err(SendError(())),
-        }
-    }
-    /// Propagate a [`RecvError`] to all [`Receiver`]s
-    ///
-    /// [`RecvError::Closed`] is mapped to [`RecvError::Reset`] because a
-    /// `Receiver` may be reconnected with another [`Sender`] later.
-    pub async fn forward_error(&self, error: RecvError) -> Result<(), SendError<()>> {
-        match self.reserve().await {
-            Ok(reservation) => {
-                reservation.forward_error(error);
-                Ok(())
-            }
-            Err(RsrvError) => Err(SendError(())),
-        }
-    }
-}
-
-impl<T> Reservation<'_, T> {
-    /// Send data to all [`Receiver`]s which have been [connected]
-    ///
-    /// [connected]: ReceiverConnector::connect
-    pub fn send(self, value: T) {
-        self.inner_reservation.send(Message::Value(value));
-    }
-    /// Notify all [`Receiver`]s that some data is missing or that the data
-    /// stream has been restarted
-    pub fn reset(self) {
-        self.inner_reservation.send(Message::Reset);
-    }
-    /// Notify all [`Receiver`]s that the data stream has been completed
-    pub fn finish(self) {
-        self.inner_reservation.send(Message::Finished)
-    }
-    /// Propagate a [`RecvError`] to all [`Receiver`]s
-    ///
-    /// [`RecvError::Closed`] is mapped to [`RecvError::Reset`] because a
-    /// `Receiver` may be reconnected with another [`Sender`] later.
-    pub fn forward_error(self, error: RecvError) {
-        self.inner_reservation.send(match error {
-            RecvError::Reset => Message::Reset,
-            RecvError::Finished => Message::Finished,
-            RecvError::Closed => Message::Reset,
-        })
-    }
-}
+/// This type is not used by this module but may be used when implementing more
+/// complex [`Message`] types.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Disconnection;
 
 /// Handle to connect a [`Receiver`] to a [`Sender`]
 ///
@@ -311,7 +108,7 @@ impl<T> Reservation<'_, T> {
 /// The `SenderConnector` is obtained when calling [`new_sender`].
 #[derive(Debug)]
 pub struct ReceiverConnector<T> {
-    enlister_tx: watch::Sender<Option<broadcast_bp::Enlister<Message<T>>>>,
+    enlister_tx: watch::Sender<Option<broadcast_bp::Enlister<T>>>,
 }
 
 /// Receiver that can be dynamically connected to a [`Sender`]
@@ -326,9 +123,8 @@ pub struct ReceiverConnector<T> {
 /// The `SenderConnector` is obtained when calling [`new_sender`].
 #[derive(Debug)]
 pub struct Receiver<T> {
-    enlister_rx: watch::Receiver<Option<broadcast_bp::Enlister<Message<T>>>>,
-    inner_receiver: Option<broadcast_bp::Receiver<Message<T>>>,
-    continuity: bool,
+    enlister_rx: watch::Receiver<Option<broadcast_bp::Enlister<T>>>,
+    inner_receiver: Option<broadcast_bp::Receiver<T>>,
 }
 
 impl<T> Clone for Receiver<T> {
@@ -336,7 +132,6 @@ impl<T> Clone for Receiver<T> {
         Self {
             enlister_rx: self.enlister_rx.clone(),
             inner_receiver: self.inner_receiver.clone(),
-            continuity: self.continuity,
         }
     }
 }
@@ -360,8 +155,7 @@ impl<T> ReceiverConnector<T> {
     }
     /// Connect associated [`Receiver`]s with a [`Sender`]
     pub fn connect(&self, connector: &SenderConnector<T>) {
-        self.enlister_tx
-            .send_replace(Some(connector.inner_enlister.clone()));
+        self.enlister_tx.send_replace(Some(connector.clone()));
     }
     /// Disconnect associated [`Receiver`]s from [`Sender`] if connected
     pub fn disconnect(&self) {
@@ -377,14 +171,13 @@ impl<T> ReceiverConnector<T> {
         Receiver {
             enlister_rx,
             inner_receiver,
-            continuity: false,
         }
     }
 }
 
 impl<T> Receiver<T>
 where
-    T: Clone,
+    T: Message,
 {
     /// Receive data from connected [`Sender`]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
@@ -395,11 +188,10 @@ where
                 .borrow_and_update()
                 .as_ref()
                 .map(|x| x.subscribe());
-            if was_connected && this.continuity {
-                this.continuity = false;
-                Err(RecvError::Reset)
+            if was_connected {
+                Message::disconnection()
             } else {
-                Ok(())
+                None
             }
         };
         let mut unchangeable = false;
@@ -413,39 +205,27 @@ where
                         self.enlister_rx.changed().await
                     } => {
                         match result {
-                            Ok(()) => change(self)?,
+                            Ok(()) => if let Some(message) = change(self) {
+                                return Ok(message);
+                            },
                             Err(_) => unchangeable = true,
                         }
                     }
                     result = inner_receiver.recv() => {
                         match result {
-                            Ok(Message::Value(value)) => {
-                                self.continuity = true;
-                                return Ok(value);
-                            }
-                            Ok(Message::Reset) => {
-                                self.continuity = false;
-                                return Err(RecvError::Reset);
-                            }
-                            Ok(Message::Finished) => {
-                                self.continuity = false;
-                                return Err(RecvError::Finished);
-                            }
+                            Ok(message) => return Ok(message),
                             Err(_) => self.inner_receiver = None,
                         }
                     }
                 }
             } else {
                 match self.enlister_rx.changed().await {
-                    Ok(()) => change(self)?,
-                    Err(_) => {
-                        if self.continuity {
-                            self.continuity = false;
-                            return Err(RecvError::Reset);
-                        } else {
-                            return Err(RecvError::Closed);
+                    Ok(()) => {
+                        if let Some(message) = change(self) {
+                            return Ok(message);
                         }
                     }
+                    Err(_) => return Err(RecvError),
                 }
             }
         }
@@ -465,11 +245,6 @@ pub trait Producer<T> {
         consumer
             .receiver_connector()
             .connect(self.sender_connector());
-    }
-    /// Connect `Producer` to [`Consumer`]
-    #[deprecated(since = "0.2.0", note = "method has been renamed to `feed_into`")]
-    fn connect_to_consumer<C: Consumer<T>>(&self, consumer: &C) {
-        self.feed_into(consumer)
     }
 }
 
@@ -496,16 +271,6 @@ pub trait Consumer<T> {
     fn feed_from_none(&self) {
         self.receiver_connector().disconnect();
     }
-    /// Connect `Consumer` to [`Producer`]
-    #[deprecated(since = "0.2.0", note = "method has been renamed to `feed_from`")]
-    fn connect_to_producer<P: Producer<T>>(&self, producer: &P) {
-        self.feed_from(producer)
-    }
-    /// Disconnect `Consumer` from any connected [`Producer`] if connected
-    #[deprecated(since = "0.2.0", note = "method has been renamed to `feed_from_none`")]
-    fn disconnect_from_producer(&self) {
-        self.feed_from_none()
-    }
 }
 
 impl<T> Consumer<T> for ReceiverConnector<T> {
@@ -521,8 +286,8 @@ mod tests {
     async fn test_reservation_sendable() {
         use super::*;
         use tokio::task::spawn;
-        let (sender, sender_connector) = new_sender::<i32>();
-        let (mut receiver, receiver_connector) = new_receiver::<i32>();
+        let (sender, sender_connector) = new_sender::<SimpleMessage<i32>>();
+        let (mut receiver, receiver_connector) = new_receiver::<SimpleMessage<i32>>();
         sender_connector.feed_into(&receiver_connector);
         // `broadcast_bp::Receiver` may not have been created yet, so we need
         // this to avoid deadlocking:

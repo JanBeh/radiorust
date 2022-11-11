@@ -2,7 +2,6 @@
 
 use crate::flt;
 use crate::numbers::*;
-use crate::samples::*;
 
 /// Calculate mean square norm
 ///
@@ -33,14 +32,14 @@ where
 
 /// Calculate bandwidth in hertz from fourier transformed samples
 ///
-/// Note: The [`Samples`] must be already in Fourier transformed form,
+/// Note: The data (`bins`) must be already in Fourier transformed form,
 /// e.g. by using [`blocks::analysis::Fourier`].
 ///
 /// The `double_percentile` parameter determines how much energy is allowed to
 /// be outside the measured bandwidth (a useful value may be `0.01`).
 ///
 /// [`blocks::analysis::Fourier`]: crate::blocks::analysis::Fourier
-pub fn bandwidth<Flt>(double_percentile: f64, fourier: &Samples<Complex<Flt>>) -> f64
+pub fn bandwidth<Flt>(double_percentile: f64, sample_rate: f64, bins: &[Complex<Flt>]) -> f64
 where
     Flt: Float,
 {
@@ -65,10 +64,6 @@ where
         }
         used_bins
     }
-    let &Samples {
-        sample_rate,
-        chunk: ref bins,
-    } = fourier;
     let n: usize = bins.len();
     let total_energy: f64 = bins.iter().map(norm_sqr).sum();
     let energy_limit: f64 = total_energy * double_percentile / 2.0;
@@ -117,7 +112,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bufferpool::*;
     use crate::tests::assert_approx;
     #[test]
     fn test_level_complex_osc() {
@@ -136,109 +130,86 @@ mod tests {
     }
     #[test]
     fn test_bandwidth_silence() {
-        let mut buf_pool = ChunkBufPool::<Complex<f64>>::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        let chunk = chunk_buf.finalize();
         assert_approx(
             bandwidth(
                 0.01,
-                &Samples {
-                    sample_rate: 48000.0,
-                    chunk,
-                },
+                48000.0,
+                &[Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)],
             ),
             0.0,
         );
     }
     #[test]
     fn test_bandwidth_spreadspectrum() {
-        let mut buf_pool = ChunkBufPool::<Complex<f64>>::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(-1.0, 0.0));
-        chunk_buf.push(Complex::new(f64::sqrt(0.5), -f64::sqrt(0.5)));
-        let chunk = chunk_buf.finalize();
         assert_approx(
             bandwidth(
                 0.01,
-                &Samples {
-                    sample_rate: 48000.0,
-                    chunk,
-                },
+                48000.0,
+                &[
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(-1.0, 0.0),
+                    Complex::new(f64::sqrt(0.5), -f64::sqrt(0.5)),
+                ],
             ),
             0.99 * 48000.0,
         );
     }
     #[test]
     fn test_bandwidth_spreadspectrum_odd() {
-        let mut buf_pool = ChunkBufPool::<Complex<f64>>::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(7.4, -2.1));
-        chunk_buf.push(Complex::new(7.4, -2.1));
-        chunk_buf.push(Complex::new(7.4, -2.1));
-        let chunk = chunk_buf.finalize();
         assert_approx(
             bandwidth(
                 0.01,
-                &Samples {
-                    sample_rate: 48000.0,
-                    chunk,
-                },
+                48000.0,
+                &[
+                    Complex::new(7.4, -2.1),
+                    Complex::new(7.4, -2.1),
+                    Complex::new(7.4, -2.1),
+                ],
             ),
             0.99 * 48000.0,
         );
     }
     #[test]
     fn test_bandwidth_carrier() {
-        let mut buf_pool = ChunkBufPool::<Complex<f64>>::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(2.1, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        let chunk = chunk_buf.finalize();
         assert_approx(
             bandwidth(
                 0.01,
-                &Samples {
-                    sample_rate: 48000.0,
-                    chunk,
-                },
+                48000.0,
+                &[
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(2.1, 0.0),
+                    Complex::new(0.0, 0.0),
+                ],
             ),
             0.99 * 48000.0 / 8.0,
         );
     }
     #[test]
     fn test_bandwidth_two_carriers() {
-        let mut buf_pool = ChunkBufPool::<Complex<f64>>::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(1.5, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        chunk_buf.push(Complex::new(1.5, 0.0));
-        chunk_buf.push(Complex::new(0.0, 0.0));
-        let chunk = chunk_buf.finalize();
         assert_approx(
             bandwidth(
                 0.01,
-                &Samples {
-                    sample_rate: 48000.0,
-                    chunk,
-                },
+                48000.0,
+                &[
+                    Complex::new(1.5, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(0.0, 0.0),
+                    Complex::new(1.5, 0.0),
+                    Complex::new(0.0, 0.0),
+                ],
             ),
             2.98 * 48000.0 / 8.0,
         );

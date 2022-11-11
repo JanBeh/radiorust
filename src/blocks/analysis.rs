@@ -3,8 +3,9 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
+use crate::impl_block_trait;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 use crate::windowing::{self, Window};
 
 use rustfft::{Fft, FftPlanner};
@@ -24,21 +25,12 @@ use std::sync::Arc;
 /// In case of an even [`Chunk`] length `n`, the rotation will result in the
 /// DC bin being at index `n / 2`.
 pub struct Fourier<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Fourier<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for Fourier<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for Fourier<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for Fourier<Flt> }
 
 impl<Flt> Fourier<Flt>
 where
@@ -70,8 +62,8 @@ where
     where
         W: Window + Send + 'static,
     {
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
             let mut previous_chunk_len: Option<usize> = None;
@@ -79,11 +71,12 @@ where
             let mut scratch: Vec<f64> = Default::default();
             let mut window_values: Vec<Flt> = Default::default();
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         let n: usize = input_chunk.len();
                         if Some(n) != previous_chunk_len {
                             fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n));
@@ -113,23 +106,14 @@ where
                         if center_dc {
                             output_chunk.rotate_right(n / 2);
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate,
-                                chunk: output_chunk.finalize(),
-                            })
-                            .await
-                        {
-                            return;
-                        }
+                        let Ok(()) = sender.send(Signal::Samples {
+                            sample_rate,
+                            chunk: output_chunk.finalize(),
+                        }).await
+                        else { return; };
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }
@@ -162,55 +146,59 @@ mod tests {
         chunk_buf.push(Complex::new(1.0, 0.0));
         chunk_buf.push(Complex::new(1.0, 0.0));
         sender
-            .send(Samples {
+            .send(Signal::Samples {
                 sample_rate: 48000.0,
                 chunk: chunk_buf.finalize(),
             })
             .await
             .unwrap();
-        let output1 = receiver1.recv().await.unwrap();
-        let output2 = receiver2.recv().await.unwrap();
-        assert_approx(output1.chunk[0].re, 3.0);
-        assert_approx(output1.chunk[0].im, 0.0);
-        assert_approx(output1.chunk[1].re, 0.0);
-        assert_approx(output1.chunk[1].im, 0.0);
-        assert_approx(output1.chunk[2].re, 0.0);
-        assert_approx(output1.chunk[2].im, 0.0);
-        assert_approx(output2.chunk[0].re, 0.0);
-        assert_approx(output2.chunk[0].im, 0.0);
-        assert_approx(output2.chunk[1].re, 3.0);
-        assert_approx(output2.chunk[1].im, 0.0);
-        assert_approx(output2.chunk[2].re, 0.0);
-        assert_approx(output2.chunk[2].im, 0.0);
+        let Signal::Samples { chunk: output1, .. } = receiver1.recv().await.unwrap()
+        else { panic!(); };
+        let Signal::Samples { chunk: output2, .. } = receiver2.recv().await.unwrap()
+        else { panic!(); };
+        assert_approx(output1[0].re, 3.0);
+        assert_approx(output1[0].im, 0.0);
+        assert_approx(output1[1].re, 0.0);
+        assert_approx(output1[1].im, 0.0);
+        assert_approx(output1[2].re, 0.0);
+        assert_approx(output1[2].im, 0.0);
+        assert_approx(output2[0].re, 0.0);
+        assert_approx(output2[0].im, 0.0);
+        assert_approx(output2[1].re, 3.0);
+        assert_approx(output2[1].im, 0.0);
+        assert_approx(output2[2].re, 0.0);
+        assert_approx(output2[2].im, 0.0);
         let mut chunk_buf = buf_pool.get();
         chunk_buf.push(Complex::new(1.0, 0.0));
         chunk_buf.push(Complex::new(1.5, 0.0));
         chunk_buf.push(Complex::new(1.0, 0.0));
         chunk_buf.push(Complex::new(0.5, 0.0));
         sender
-            .send(Samples {
+            .send(Signal::Samples {
                 sample_rate: 48000.0,
                 chunk: chunk_buf.finalize(),
             })
             .await
             .unwrap();
-        let output1 = receiver1.recv().await.unwrap();
-        let output2 = receiver2.recv().await.unwrap();
-        assert_approx(output1.chunk[0].re, 4.0);
-        assert_approx(output1.chunk[0].im, 0.0);
-        assert_approx(output1.chunk[1].re, 0.0);
-        assert_approx(output1.chunk[1].im, -1.0);
-        assert_approx(output1.chunk[2].re, 0.0);
-        assert_approx(output1.chunk[2].im, 0.0);
-        assert_approx(output1.chunk[3].re, 0.0);
-        assert_approx(output1.chunk[3].im, 1.0);
-        assert_approx(output2.chunk[0].re, 0.0);
-        assert_approx(output2.chunk[0].im, 0.0);
-        assert_approx(output2.chunk[1].re, 0.0);
-        assert_approx(output2.chunk[1].im, 1.0);
-        assert_approx(output2.chunk[2].re, 4.0);
-        assert_approx(output2.chunk[2].im, 0.0);
-        assert_approx(output2.chunk[3].re, 0.0);
-        assert_approx(output2.chunk[3].im, -1.0);
+        let Signal::Samples { chunk: output1, .. } = receiver1.recv().await.unwrap()
+        else { panic!(); };
+        let Signal::Samples { chunk: output2, .. } = receiver2.recv().await.unwrap()
+        else { panic!(); };
+        assert_approx(output1[0].re, 4.0);
+        assert_approx(output1[0].im, 0.0);
+        assert_approx(output1[1].re, 0.0);
+        assert_approx(output1[1].im, -1.0);
+        assert_approx(output1[2].re, 0.0);
+        assert_approx(output1[2].im, 0.0);
+        assert_approx(output1[3].re, 0.0);
+        assert_approx(output1[3].im, 1.0);
+        assert_approx(output2[0].re, 0.0);
+        assert_approx(output2[0].im, 0.0);
+        assert_approx(output2[1].re, 0.0);
+        assert_approx(output2[1].im, 1.0);
+        assert_approx(output2[2].re, 4.0);
+        assert_approx(output2[2].im, 0.0);
+        assert_approx(output2[3].re, 0.0);
+        assert_approx(output2[3].im, -1.0);
     }
 }

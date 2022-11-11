@@ -3,8 +3,9 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
+use crate::impl_block_trait;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 use crate::windowing::{Kaiser, Rectangular, Window};
 
 use rustfft::{Fft, FftPlanner};
@@ -63,13 +64,14 @@ struct FilterParams {
 /// all-pass filters, or any combination thereof.
 ///
 /// Frequency resolution depends on the [`sample_rate`] and [`chunk`]
-/// length of received [`Samples`] as well as the selected [`Window`] function.
+/// length of received [`Signal::Samples`] as well as the selected [`Window`]
+/// function.
 /// Using [`Kaiser::with_null_at_bin(x)`] results in a frequency resolution in
 /// hertz of `x * sample_rate / chunk.len()`, but higher `x` improve stop band
 /// attenuation (`x` must be `>= 1.0` and defaults to `2.0`).
 /// To increase frequency resolution without worsening stop band attenuation,
-/// increase the chunk length of the received `Samples`. Note, however, that
-/// this will also increase the delay of the filter.
+/// increase the chunk length of the received samples. Note, however, that this
+/// will also increase the delay of the filter.
 ///
 /// You may use a [`Rechunker`] block to adjust the chunk length which the
 /// filter is operating with if this cannot be achieved otherwise, e.g. through
@@ -100,29 +102,20 @@ struct FilterParams {
 /// # }
 /// ```
 ///
-/// [`sample_rate`]: Samples::sample_rate
-/// [`chunk`]: Samples::chunk
+/// [`sample_rate`]: Signal::Samples::sample_rate
+/// [`chunk`]: Signal::Samples::chunk
 /// [`Kaiser::with_null_at_bin(x)`]: Kaiser::with_null_at_bin
 /// [`Rechunker`]: crate::blocks::chunks::Rechunker
 /// [`Downsampler`]: crate::blocks::resampling::Downsampler
 /// [`Upsampler`]: crate::blocks::resampling::Upsampler
 pub struct Filter<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     params: watch::Sender<FilterParams>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Filter<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for Filter<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for Filter<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for Filter<Flt> }
 
 impl<Flt> Filter<Flt>
 where
@@ -162,8 +155,8 @@ where
         freq_resp: Box<dyn FreqRespFunc + Send + Sync>,
         window: Box<dyn Window + Send + Sync>,
     ) -> Self {
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (params_send, mut params_recv) = watch::channel(FilterParams { freq_resp, window });
         spawn(async move {
             let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
@@ -174,11 +167,12 @@ where
             let mut ifft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut extended_response: Vec<Complex<Flt>> = Default::default();
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         let n = input_chunk.len();
                         let recalculate: bool = params_recv.has_changed().unwrap_or(false)
                             || Some(sample_rate) != prev_sample_rate
@@ -244,26 +238,20 @@ where
                             }
                             ifft.as_ref().unwrap().process(&mut output_chunk);
                             output_chunk.truncate(n);
-                            if let Err(_) = sender
-                                .send(Samples {
-                                    sample_rate,
-                                    chunk: output_chunk.finalize(),
-                                })
-                                .await
-                            {
-                                return;
-                            }
+                            let Ok(()) = sender.send(Signal::Samples {
+                                sample_rate,
+                                chunk: output_chunk.finalize(),
+                             }).await
+                            else { return; };
                         }
                         previous_chunk = Some(input_chunk);
                     }
-                    Err(err) => {
-                        previous_chunk = None;
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
+                    Signal::Event { interrupt, payload } => {
+                        if interrupt {
+                            previous_chunk = None;
                         }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                        let Ok(()) = sender.send(Signal::Event { interrupt, payload }).await
+                        else { return; };
                     }
                 }
             }
@@ -304,22 +292,13 @@ where
 /// [`new`]: SlewRateLimiter::new
 /// [`set_slew_rate`]: SlewRateLimiter::set_slew_rate
 pub struct SlewRateLimiter<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     slew_rate: watch::Sender<f64>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for SlewRateLimiter<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for SlewRateLimiter<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for SlewRateLimiter<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for SlewRateLimiter<Flt> }
 
 impl<Flt> SlewRateLimiter<Flt>
 where
@@ -327,19 +306,20 @@ where
 {
     /// Create new `SlewRateLimiter` block
     pub fn new(slew_rate: f64) -> Self {
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (slew_rate_send, mut slew_rate_recv) = watch::channel(slew_rate);
         spawn(async move {
             let mut slew_rate = slew_rate;
             let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
             let mut previous_sample: Complex<Flt> = Complex::from(Flt::zero());
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         if slew_rate_recv.has_changed().unwrap_or(false) {
                             slew_rate = slew_rate_recv.borrow_and_update().clone();
                         }
@@ -354,23 +334,14 @@ where
                             output_chunk.push(sample);
                             previous_sample = sample;
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate,
-                                chunk: output_chunk.finalize(),
-                            })
-                            .await
-                        {
-                            return;
-                        }
+                        let Ok(()) = sender.send(Signal::Samples {
+                            sample_rate,
+                            chunk: output_chunk.finalize(),
+                         }).await
+                        else { return; };
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }

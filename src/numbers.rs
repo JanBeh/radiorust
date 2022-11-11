@@ -39,8 +39,8 @@ where
 {
 }
 
-/// Macro to convert number into a generic [`Float`] type, which must be in
-/// scope as "`Flt`"
+/// Convert number into a generic [`Float`] type, which must be in scope as
+/// "`Flt`"
 ///
 /// # Example
 ///

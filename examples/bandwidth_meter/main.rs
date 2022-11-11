@@ -64,14 +64,15 @@ async fn main() {
     overlapper.feed_from(&filter);
     let fourier = blocks::Fourier::with_window(Kaiser::with_null_at_bin(quality as f64));
     fourier.feed_from(&overlapper);
-    let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
+    let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
     receiver_connector.feed_from(&fourier);
+    drop(receiver_connector);
     let mut values: VecDeque<f64> = VecDeque::new();
     let mut i = 0;
     loop {
-        match receiver.recv().await {
-            Ok(samples) => {
-                let bw = metering::bandwidth(0.01, &samples);
+        match receiver.recv().await.unwrap() {
+            Signal::Samples { sample_rate, chunk } => {
+                let bw = metering::bandwidth(0.01, sample_rate, &chunk);
                 if values.len() >= 100 {
                     values.pop_front();
                 }
@@ -88,7 +89,7 @@ async fn main() {
                     i = 0;
                 }
             }
-            Err(err) => println!("Error: {err:?}"),
+            Signal::Event { payload, .. } => println!("Event: {payload:?}"),
         }
     }
 }

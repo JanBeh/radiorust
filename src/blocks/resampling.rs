@@ -3,30 +3,22 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
+use crate::impl_block_trait;
 use crate::math::*;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 use crate::windowing::{self, Window};
 
 use tokio::task::spawn;
 
 /// Reduce sample rate
 pub struct Downsampler<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Downsampler<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for Downsampler<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for Downsampler<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for Downsampler<Flt> }
 
 impl<Flt> Downsampler<Flt>
 where
@@ -37,12 +29,13 @@ where
     /// This call corresponds to [`Downsampler::with_quality`] with a `quality`
     /// value of `3.0`.
     ///
-    /// Connected [`Producer`]s must emit [`Samples`] with a [`sample_rate`]
-    /// equal to or higher than `output_rate`; otherwise a panic occurs.
+    /// Connected [`Producer`]s must emit [`Signal::Samples`] with a
+    /// [`sample_rate`] equal to or higher than `output_rate`; otherwise a
+    /// panic occurs.
     ///
     /// Aliasing is suppressed for frequencies lower than `bandwidth`.
     ///
-    /// [`sample_rate`]: Samples::sample_rate
+    /// [`sample_rate`]: Signal::Samples::sample_rate
     pub fn new(output_chunk_len: usize, output_rate: f64, bandwidth: f64) -> Self {
         Self::with_quality(output_chunk_len, output_rate, bandwidth, 3.0)
     }
@@ -62,8 +55,8 @@ where
             bandwidth < output_rate,
             "bandwidth must be smaller than output sample rate"
         );
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut output_chunk = buf_pool.get_with_capacity(output_chunk_len);
         spawn(async move {
@@ -74,11 +67,12 @@ where
             let mut ringbuf_pos: usize = Default::default();
             let mut pos: f64 = Default::default();
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate: input_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         if Some(input_rate) != prev_input_rate {
                             prev_input_rate = Some(input_rate);
                             assert!(input_rate >= 0.0, "input sample rate must be positive");
@@ -127,27 +121,20 @@ where
                                 }
                                 output_chunk.push(sum);
                                 if output_chunk.len() >= output_chunk_len {
-                                    if let Err(_) = sender
-                                        .send(Samples {
+                                    let Ok(()) = sender
+                                        .send(Signal::Samples {
                                             sample_rate: output_rate,
                                             chunk: output_chunk.finalize(),
                                         })
                                         .await
-                                    {
-                                        return;
-                                    }
+                                    else { return; };
                                     output_chunk = buf_pool.get_with_capacity(output_chunk_len);
                                 }
                             }
                         }
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }
@@ -161,21 +148,12 @@ where
 
 /// Increase sample rate
 pub struct Upsampler<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for Upsampler<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for Upsampler<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for Upsampler<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for Upsampler<Flt> }
 
 impl<Flt> Upsampler<Flt>
 where
@@ -186,13 +164,13 @@ where
     /// This call corresponds to [`Upsampler::with_quality`] with a `quality`
     /// value of `3.0`.
     ///
-    /// Connected [`Producer`]s must emit [`Samples`] with a [`sample_rate`]
-    /// equal to or smaller than `output_rate` but larger than `bandwidth`;
-    /// otherwise a panic occurs.
+    /// Connected [`Producer`]s must emit [`Signal::Samples`] with a
+    /// [`sample_rate`] equal to or smaller than `output_rate` but larger than
+    /// `bandwidth`; otherwise a panic occurs.
     ///
     /// Aliasing is suppressed for frequencies lower than `bandwidth`.
     ///
-    /// [`sample_rate`]: Samples::sample_rate
+    /// [`sample_rate`]: Signal::Samples::sample_rate
     pub fn new(output_chunk_len: usize, output_rate: f64, bandwidth: f64) -> Self {
         Self::with_quality(output_chunk_len, output_rate, bandwidth, 3.0)
     }
@@ -208,8 +186,8 @@ where
     ) -> Self {
         assert!(output_rate >= 0.0, "output sample rate must be positive");
         assert!(bandwidth >= 0.0, "bandwidth must be positive");
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
         let mut output_chunk = buf_pool.get_with_capacity(output_chunk_len);
         spawn(async move {
@@ -219,11 +197,12 @@ where
             let mut ringbuf_pos: usize = Default::default();
             let mut pos: f64 = Default::default();
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate: input_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         if Some(input_rate) != prev_input_rate {
                             prev_input_rate = Some(input_rate);
                             assert!(input_rate >= 0.0, "input sample rate must be positive");
@@ -270,15 +249,13 @@ where
                                 output_chunk.push(ringbuf[ringbuf_pos]);
                                 ringbuf[ringbuf_pos] = Complex::from(Flt::zero());
                                 if output_chunk.len() >= output_chunk_len {
-                                    if let Err(_) = sender
-                                        .send(Samples {
+                                    let Ok(()) = sender
+                                        .send(Signal::Samples {
                                             sample_rate: output_rate,
                                             chunk: output_chunk.finalize(),
                                         })
                                         .await
-                                    {
-                                        return;
-                                    }
+                                    else { return; };
                                     output_chunk = buf_pool.get_with_capacity(output_chunk_len);
                                 }
                                 ringbuf_pos += 1;
@@ -290,13 +267,8 @@ where
                             pos -= output_rate;
                         }
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }

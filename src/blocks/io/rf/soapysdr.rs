@@ -3,7 +3,7 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 
 use tokio::runtime;
 use tokio::sync::{watch, Mutex};
@@ -35,16 +35,16 @@ impl Default for SoapySdrRxState {
 }
 
 /// Block which wraps an [`soapysdr::RxStream`] and acts as a
-/// [`Producer<Samples<Complex<Flt>>>`]
+/// [`Producer<Signal<Complex<Flt>>>`]
 pub struct SoapySdrRx {
-    sender: Sender<Samples<Complex<f32>>>,
-    sender_connector: SenderConnector<Samples<Complex<f32>>>,
+    sender: Sender<Signal<Complex<f32>>>,
+    sender_connector: SenderConnector<Signal<Complex<f32>>>,
     sample_rate: f64,
     state: Mutex<SoapySdrRxState>,
 }
 
-impl Producer<Samples<Complex<f32>>> for SoapySdrRx {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<f32>>> {
+impl Producer<Signal<Complex<f32>>> for SoapySdrRx {
+    fn sender_connector(&self) -> &SenderConnector<Signal<Complex<f32>>> {
         &self.sender_connector
     }
 }
@@ -56,7 +56,7 @@ impl SoapySdrRx {
     /// Instead, the stream must be activated by invoking
     /// [`SoapySdrRx::activate`].
     pub fn new(rx_stream: soapysdr::RxStream<Complex<f32>>, sample_rate: f64) -> Self {
-        let (sender, sender_connector) = new_sender::<Samples<Complex<f32>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<f32>>>();
         let state = Mutex::new(SoapySdrRxState::Idle(rx_stream));
         Self {
             sender,
@@ -113,12 +113,11 @@ impl SoapySdrRx {
                             }
                         };
                         buffer.truncate(count);
-                        if let Err(_) = rt.block_on(sender.send(Samples {
+                        let Ok(()) = rt.block_on(sender.send(Signal::Samples {
                             sample_rate,
                             chunk: buffer.finalize(),
-                        })) {
-                            break;
-                        }
+                        }))
+                        else { break; };
                     }
                     if let Err(err) = rx_stream.deactivate(None) {
                         if result.is_ok() {

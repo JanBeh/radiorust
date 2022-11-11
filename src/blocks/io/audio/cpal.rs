@@ -2,11 +2,11 @@
 
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::impl_block_trait;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
-use tokio::sync::oneshot;
 
 pub use cpal::Device;
 
@@ -32,16 +32,13 @@ pub fn default_input_device() -> cpal::Device {
 
 /// Audio player block acting as a [`Consumer`]
 pub struct AudioPlayer {
-    receiver_connector: ReceiverConnector<Samples<Complex<f32>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<f32>>>,
+    event_handlers: EventHandlers,
     stream: cpal::Stream,
-    completion: oneshot::Receiver<RecvError>,
 }
 
-impl Consumer<Samples<Complex<f32>>> for AudioPlayer {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<f32>>> {
-        &self.receiver_connector
-    }
-}
+impl_block_trait! { Consumer<Signal<Complex<f32>>> for AudioPlayer }
+impl_block_trait! { EventHandling for AudioPlayer }
 
 impl AudioPlayer {
     /// Create block for audio playback with given `sample_rate` and optionally
@@ -67,9 +64,9 @@ impl AudioPlayer {
             },
         };
         let rt = tokio::runtime::Handle::current();
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
-        let (completion_send, completion_recv) = oneshot::channel::<RecvError>();
-        let mut completion_send = Some(completion_send);
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
+        let event_handlers = EventHandlers::new();
+        let evhdl_clone = event_handlers.clone();
         let err_fn = move |err| eprintln!("Audio output error: {err}");
         let mut current_chunk_and_pos: Option<(Chunk<Complex<f32>>, usize)> = None;
         let write_audio = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -77,25 +74,19 @@ impl AudioPlayer {
                 let (current_chunk, mut current_pos) = match current_chunk_and_pos.take() {
                     Some(x) => x,
                     None => loop {
-                        match rt.block_on(receiver.recv()) {
-                            Ok(Samples {
+                        let Ok(signal) = rt.block_on(receiver.recv()) else { return; };
+                        match signal {
+                            Signal::Samples {
                                 sample_rate: rcvd_sample_rate,
                                 chunk,
-                            }) => {
+                            } => {
                                 assert_eq!(
                                     rcvd_sample_rate, sample_rate,
                                     "audio block received samples with unexpected sample rate"
                                 );
                                 break (chunk, 0);
                             }
-                            Err(err) => {
-                                if let Some(completion_send) = completion_send.take() {
-                                    completion_send.send(err).ok();
-                                }
-                                if err == RecvError::Closed {
-                                    return;
-                                }
-                            }
+                            Signal::Event { payload, .. } => evhdl_clone.invoke(&payload),
                         }
                     },
                 };
@@ -110,8 +101,8 @@ impl AudioPlayer {
         stream.play()?;
         Ok(Self {
             receiver_connector,
+            event_handlers,
             stream,
-            completion: completion_recv,
         })
     }
     /// Resume playback
@@ -124,27 +115,16 @@ impl AudioPlayer {
         self.stream.pause()?;
         Ok(())
     }
-    /// Wait for played back stream to finish
-    ///
-    /// Awaiting this function will stop the playback as soon as the stream has
-    /// been interrupted ([`RecvError::Reset`]) or the end of stream has been
-    /// signalled ([`RecvError::Finished`]), even if more data might arrive.
-    pub async fn wait(self) -> Result<(), Box<dyn Error>> {
-        match self.completion.await? {
-            RecvError::Finished => Ok(()),
-            err => Err(err.into()),
-        }
-    }
 }
 
 /// Audio recorder block acting as a [`Producer`]
 pub struct AudioRecorder {
-    sender_connector: SenderConnector<Samples<Complex<f32>>>,
+    sender_connector: SenderConnector<Signal<Complex<f32>>>,
     stream: cpal::Stream,
 }
 
-impl Producer<Samples<Complex<f32>>> for AudioRecorder {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<f32>>> {
+impl Producer<Signal<Complex<f32>>> for AudioRecorder {
+    fn sender_connector(&self) -> &SenderConnector<Signal<Complex<f32>>> {
         &self.sender_connector
     }
 }
@@ -173,7 +153,7 @@ impl AudioRecorder {
             },
         };
         let rt = tokio::runtime::Handle::current();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<f32>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<f32>>>();
         let err_fn = move |err| eprintln!("Audio input error: {err}");
         let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
         let read_audio = move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -181,12 +161,11 @@ impl AudioRecorder {
             for &sample in data.iter() {
                 output_chunk.push(Complex::from(sample));
             }
-            if let Err(_) = rt.block_on(sender.send(Samples {
+            let Ok(()) = rt.block_on(sender.send(Signal::Samples {
                 sample_rate,
                 chunk: output_chunk.finalize(),
-            })) {
-                return;
-            }
+            }))
+            else { return; };
         };
         let stream = device.build_input_stream(&config, read_audio, err_fn)?;
         stream.play()?;

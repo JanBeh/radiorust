@@ -3,8 +3,9 @@
 use crate::bufferpool::*;
 use crate::flow::*;
 use crate::flt;
+use crate::impl_block_trait;
 use crate::numbers::*;
-use crate::samples::*;
+use crate::signal::*;
 
 use num::rational::Ratio;
 use tokio::sync::{mpsc, watch};
@@ -27,22 +28,13 @@ use tokio::task::spawn;
 /// # });
 /// ```
 pub struct GainControl<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     gain: watch::Sender<f64>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for GainControl<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for GainControl<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for GainControl<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for GainControl<Flt> }
 
 impl<Flt> GainControl<Flt>
 where
@@ -50,18 +42,19 @@ where
 {
     /// Creates a block which multiplies each sample with the given `gain`
     pub fn new(gain: f64) -> Self {
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (gain_send, mut gain_recv) = watch::channel(gain);
         spawn(async move {
             let mut gain = flt!(gain);
             let mut buf_pool = ChunkBufPool::new();
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         if gain_recv.has_changed().unwrap_or(false) {
                             gain = flt!(gain_recv.borrow_and_update().clone())
                         }
@@ -69,23 +62,16 @@ where
                         for sample in input_chunk.iter() {
                             output_chunk.push(sample * gain);
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate: sample_rate,
+                        let Ok(()) = sender
+                            .send(Signal::Samples {
+                                sample_rate,
                                 chunk: output_chunk.finalize(),
                             })
                             .await
-                        {
-                            return;
-                        }
+                        else { return; };
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }
@@ -106,7 +92,7 @@ where
     }
 }
 
-/// Block which receives [`Samples<T>`] and applies a closure to every sample,
+/// Block which receives [`Signal<T>`] and applies a closure to every sample,
 /// e.g. to change amplitude or to apply a constant phase shift, before sending
 /// it further.
 ///
@@ -114,35 +100,26 @@ where
 ///
 /// ```
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async move {
-/// use radiorust::{blocks::MapEachSample, numbers::Complex};
-/// let attenuate_6db = MapEachSample::<Complex<f32>>::with_closure(move |x| x / 2.0);
+/// use radiorust::{blocks::MapSample, numbers::Complex};
+/// let attenuate_6db = MapSample::<Complex<f32>>::with_closure(move |x| x / 2.0);
 /// # });
 /// ```
 ///
 /// See also [`GainControl`] for a more direct way to use an attenuator.
-pub struct MapEachSample<T> {
-    receiver_connector: ReceiverConnector<Samples<T>>,
-    sender_connector: SenderConnector<Samples<T>>,
+pub struct MapSample<T> {
+    receiver_connector: ReceiverConnector<Signal<T>>,
+    sender_connector: SenderConnector<Signal<T>>,
     closure: mpsc::UnboundedSender<Box<dyn FnMut(T) -> T + Send + 'static>>,
 }
 
-impl<T> Consumer<Samples<T>> for MapEachSample<T> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<T>> {
-        &self.receiver_connector
-    }
-}
+impl_block_trait! { <T> Consumer<Signal<T>> for MapSample<T> }
+impl_block_trait! { <T> Producer<Signal<T>> for MapSample<T> }
 
-impl<T> Producer<Samples<T>> for MapEachSample<T> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<T>> {
-        &self.sender_connector
-    }
-}
-
-impl<T> MapEachSample<T>
+impl<T> MapSample<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    /// Creates a block which doesn't modify the [`Samples`]
+    /// Creates a block which doesn't modify the samples
     pub fn new() -> Self {
         Self::with_closure(|x| x)
     }
@@ -154,8 +131,8 @@ where
         Self::new_internal(Box::new(closure))
     }
     fn new_internal(closure: Box<dyn FnMut(T) -> T + Send + 'static>) -> Self {
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<T>>();
-        let (sender, sender_connector) = new_sender::<Samples<T>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<T>>();
+        let (sender, sender_connector) = new_sender::<Signal<T>>();
         let (closure_send, mut closure_recv) = mpsc::unbounded_channel();
         closure_send
             .send(closure)
@@ -164,11 +141,12 @@ where
             let mut buf_pool = ChunkBufPool::new();
             let mut closure_opt: Option<Box<dyn FnMut(T) -> T + Send + 'static>> = None;
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         loop {
                             match closure_recv.try_recv() {
                                 Ok(f) => closure_opt = Some(f),
@@ -180,23 +158,16 @@ where
                         for sample in input_chunk.iter() {
                             output_chunk.push(closure(sample.clone()));
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate: sample_rate,
+                        let Ok(()) = sender
+                            .send(Signal::Samples {
+                                sample_rate,
                                 chunk: output_chunk.finalize(),
                             })
                             .await
-                        {
-                            return;
-                        }
+                        else { return; };
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }
@@ -216,48 +187,39 @@ where
     }
 }
 
-/// Block which applies a closure to every received message (e.g. [`Samples`])
-/// before sending it further.
+/// Block which applies a closure to every received [`Message`] (e.g.
+/// [`Signal`]) before sending it further.
 ///
 /// Note that this block doesn't allow to specify how [`RecvError`]s are
 /// handled. Thus in in many cases, it is better to implement a custom type as
 /// [`Consumer`]/[`Producer`] (see [`Nop`] for an example) instead of using
 /// this block.
 ///
-/// See also [`MapEachSample`] for a block which performs the operation on a
+/// See also [`MapSample`] for a block which performs the operation on a
 /// per-sample basis and may be better suited when wanting to apply a function
 /// to each sample.
 ///
 /// [`Nop`]: crate::blocks::Nop
-pub struct MapEachMessage<T> {
+pub struct MapSignal<T> {
     receiver_connector: ReceiverConnector<T>,
     sender_connector: SenderConnector<T>,
     closure: mpsc::UnboundedSender<Box<dyn FnMut(T) -> T + Send + 'static>>,
 }
 
-impl<T> Consumer<T> for MapEachMessage<T> {
-    fn receiver_connector(&self) -> &ReceiverConnector<T> {
-        &self.receiver_connector
-    }
-}
+impl_block_trait! { <T> Consumer<T> for MapSignal<T> }
+impl_block_trait! { <T> Producer<T> for MapSignal<T> }
 
-impl<T> Producer<T> for MapEachMessage<T> {
-    fn sender_connector(&self) -> &SenderConnector<T> {
-        &self.sender_connector
-    }
-}
-
-impl<T> MapEachMessage<T>
+impl<T> MapSignal<T>
 where
-    T: Clone + Send + 'static,
+    T: Message + Send + 'static,
 {
-    /// Creates a block which doesn't modify the received messages (e.g.
-    /// [`Samples`])
+    /// Creates a block which doesn't modify the received messages (e.g. which
+    /// doesn't modify the [`Signal`]s)
     pub fn new() -> Self {
         Self::with_closure(|x| x)
     }
     /// Creates a block which applies the given `closure` to each message (e.g.
-    /// to each [`Samples`])
+    /// to each [`Signal`])
     pub fn with_closure<F>(closure: F) -> Self
     where
         F: FnMut(T) -> T + Send + 'static,
@@ -274,29 +236,16 @@ where
         spawn(async move {
             let mut closure_opt: Option<Box<dyn FnMut(T) -> T + Send + 'static>> = None;
             loop {
-                match receiver.recv().await {
-                    Ok(message) => {
-                        loop {
-                            match closure_recv.try_recv() {
-                                Ok(f) => closure_opt = Some(f),
-                                Err(_) => break,
-                            }
-                        }
-                        let closure = closure_opt.as_mut().unwrap();
-                        let message = closure(message);
-                        if let Err(_) = sender.send(message).await {
-                            return;
-                        }
-                    }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                let Ok(signal) = receiver.recv().await else { return; };
+                loop {
+                    match closure_recv.try_recv() {
+                        Ok(f) => closure_opt = Some(f),
+                        Err(_) => break,
                     }
                 }
+                let closure = closure_opt.as_mut().unwrap();
+                let signal = closure(signal);
+                let Ok(()) = sender.send(signal).await else { return; };
             }
         });
         Self {
@@ -316,23 +265,14 @@ where
 
 /// Complex oscillator and mixer, which shifts all frequencies in an I/Q stream
 pub struct FreqShifter<Flt> {
-    receiver_connector: ReceiverConnector<Samples<Complex<Flt>>>,
-    sender_connector: SenderConnector<Samples<Complex<Flt>>>,
+    receiver_connector: ReceiverConnector<Signal<Complex<Flt>>>,
+    sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     precision: f64,
     shift: watch::Sender<f64>,
 }
 
-impl<Flt> Consumer<Samples<Complex<Flt>>> for FreqShifter<Flt> {
-    fn receiver_connector(&self) -> &ReceiverConnector<Samples<Complex<Flt>>> {
-        &self.receiver_connector
-    }
-}
-
-impl<Flt> Producer<Samples<Complex<Flt>>> for FreqShifter<Flt> {
-    fn sender_connector(&self) -> &SenderConnector<Samples<Complex<Flt>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { <Flt> Consumer<Signal<Complex<Flt>>> for FreqShifter<Flt> }
+impl_block_trait! { <Flt> Producer<Signal<Complex<Flt>>> for FreqShifter<Flt> }
 
 impl<Flt> FreqShifter<Flt>
 where
@@ -361,8 +301,8 @@ where
             let numer: isize = (denom as f64 * frequency / sample_rate).round() as isize;
             Ratio::new(numer, denom)
         };
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<Flt>>>();
-        let (sender, sender_connector) = new_sender::<Samples<Complex<Flt>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<Flt>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<Flt>>>();
         let (shift_send, mut shift_recv) = watch::channel(shift);
         spawn(async move {
             let mut phase_vec: Vec<Complex<Flt>> = Vec::new();
@@ -370,11 +310,12 @@ where
             let mut prev_sample_rate: Option<f64> = None;
             let mut buf_pool = ChunkBufPool::<Complex<Flt>>::new();
             loop {
-                match receiver.recv().await {
-                    Ok(Samples {
+                let Ok(signal) = receiver.recv().await else { return; };
+                match signal {
+                    Signal::Samples {
                         sample_rate,
                         chunk: input_chunk,
-                    }) => {
+                    } => {
                         let recalculate: bool = shift_recv.has_changed().unwrap_or(false)
                             || Some(sample_rate) != prev_sample_rate;
                         prev_sample_rate = Some(sample_rate);
@@ -406,23 +347,16 @@ where
                                 phase_idx = 0;
                             }
                         }
-                        if let Err(_) = sender
-                            .send(Samples {
-                                sample_rate: sample_rate,
+                        let Ok(()) = sender
+                            .send(Signal::Samples {
+                                sample_rate,
                                 chunk: output_chunk.finalize(),
                             })
                             .await
-                        {
-                            return;
-                        }
+                        else { return; };
                     }
-                    Err(err) => {
-                        if let Err(_) = sender.forward_error(err).await {
-                            return;
-                        }
-                        if err == RecvError::Closed {
-                            return;
-                        }
+                    event @ Signal::Event { .. } => {
+                        let Ok(()) = sender.send(event).await else { return; };
                     }
                 }
             }
@@ -462,9 +396,9 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_gain_control() {
-        let (sender, sender_connector) = new_sender::<Samples<Complex<f32>>>();
+        let (sender, sender_connector) = new_sender::<Signal<Complex<f32>>>();
         let attenuator = GainControl::new(0.25);
-        let (mut receiver, receiver_connector) = new_receiver::<Samples<Complex<f32>>>();
+        let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
         attenuator.feed_from(&sender_connector);
         attenuator.feed_into(&receiver_connector);
         let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
@@ -473,16 +407,17 @@ mod tests {
         chunk_buf.push(Complex::new(15.0, -2.0));
         let chunk = chunk_buf.finalize();
         sender
-            .send(Samples {
+            .send(Signal::Samples {
                 sample_rate: 48000.0,
                 chunk,
             })
             .await
             .unwrap();
-        let received = receiver.recv().await.unwrap();
-        assert_eq!(received.chunk[0].re, 8.0);
-        assert_eq!(received.chunk[0].im, -0.25);
-        assert_eq!(received.chunk[1].re, 3.75);
-        assert_eq!(received.chunk[1].im, -0.5);
+        let Signal::Samples { chunk, .. } = receiver.recv().await.unwrap()
+        else { panic!(); };
+        assert_eq!(chunk[0].re, 8.0);
+        assert_eq!(chunk[0].im, -0.25);
+        assert_eq!(chunk[1].re, 3.75);
+        assert_eq!(chunk[1].im, -0.5);
     }
 }

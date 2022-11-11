@@ -54,7 +54,7 @@ where
 #[macro_export]
 macro_rules! flt {
     ($x:expr) => {
-        Flt::from($x).expect("could not convert number into float")
+        <Flt as ::num::traits::NumCast>::from($x).expect("could not convert number into float")
     };
 }
 

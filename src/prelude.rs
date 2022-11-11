@@ -8,5 +8,5 @@ pub use super::flow::{
 };
 pub use super::impl_block_trait;
 pub use super::numbers::Complex;
-pub use super::signal::{EventHandling, Signal};
+pub use super::signal::{EventHandlers, EventHandling, Signal};
 pub use super::windowing::{Kaiser, Rectangular, Window as _};

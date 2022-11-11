@@ -12,7 +12,6 @@
 //!
 //! ```
 //! use radiorust::prelude::*;
-//! use tokio::sync::mpsc::unbounded_channel;
 //!
 //! #[tokio::main]
 //! async fn main() {

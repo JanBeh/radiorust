@@ -119,7 +119,6 @@ pub trait EventHandling {
         F: FnMut(&Arc<dyn Any + Send + Sync>) -> bool + Send + 'static,
     {
         let (waiter_tx, mut waiter_rx) = mpsc::unbounded_channel::<()>();
-        // TODO: remove event handler
         let handle = self.on_event(move |payload| {
             if func(payload) {
                 waiter_tx.send(()).ok();

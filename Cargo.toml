@@ -1,6 +1,6 @@
 [package]
 name = "radiorust"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Jan Behrens <jbe@magnetkern.de>"]
 edition = "2021"
 description = "Software Defined Radio using the Tokio runtime"

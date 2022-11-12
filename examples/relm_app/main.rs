@@ -13,6 +13,9 @@ use simple_receiver::*;
     long_about = None,
 )]
 struct Args {
+    /// Device options (e.g. "driver=rtlsdr")
+    #[arg(short = 'd', long, default_value = "")]
+    device_options: String,
     /// Frequency in MHz
     #[arg(short = 'f', long)]
     frequency: f64,
@@ -102,7 +105,7 @@ impl Widgets<AppModel, ()> for AppWidgets {
 fn main() {
     let args = Args::parse();
     let rt = Runtime::new().unwrap();
-    let simple_sdr = rt.block_on(SimpleSdr::new(1e6 * args.frequency));
+    let simple_sdr = rt.block_on(SimpleSdr::new(&args.device_options, 1e6 * args.frequency));
     let model = AppModel {
         _rt: rt,
         simple_sdr,

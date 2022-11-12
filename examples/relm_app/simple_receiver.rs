@@ -11,10 +11,10 @@ pub struct SimpleSdr {
 }
 
 impl SimpleSdr {
-    pub async fn new(frequency: f64) -> Self {
+    pub async fn new(device_options: &str, frequency: f64) -> Self {
         let sample_rate = 1024000.0;
         let bandwidth = 1024000.0;
-        let device = soapysdr::Device::new("").unwrap();
+        let device = soapysdr::Device::new(device_options).unwrap();
         device.set_frequency(Rx, 0, frequency, "").unwrap();
         device.set_sample_rate(Rx, 0, sample_rate).unwrap();
         device.set_bandwidth(Rx, 0, bandwidth).unwrap();

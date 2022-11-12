@@ -13,6 +13,9 @@ use std::collections::VecDeque;
     long_about = None,
 )]
 struct Args {
+    /// Device options (e.g. "driver=rtlsdr")
+    #[arg(short = 'd', long, default_value = "")]
+    device_options: String,
     /// Center frequency in MHz
     #[arg(short = 'f', long)]
     frequency: f64,
@@ -39,7 +42,7 @@ async fn main() {
     let hw_frequency = frequency + freq_offset;
     let sample_rate = 1024000.0;
     let bandwidth = 1024000.0;
-    let device = soapysdr::Device::new("").unwrap();
+    let device = soapysdr::Device::new(args.device_options.as_str()).unwrap();
     println!("Hardware frequency: {hw_frequency}");
     device.set_frequency(Rx, 0, hw_frequency, "").unwrap();
     device.set_sample_rate(Rx, 0, sample_rate).unwrap();

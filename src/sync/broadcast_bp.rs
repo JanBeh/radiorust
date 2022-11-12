@@ -308,8 +308,8 @@ where
 {
     /// Receive a value
     ///
-    /// This method waits when there is no value to receive but returns `None`
-    /// when all [`Sender`]s have been dropped.
+    /// This method waits when there is no value to receive but returns
+    /// [`RecvError`] when all [`Sender`]s have been dropped.
     pub async fn recv(&mut self) -> Result<T, RecvError> {
         let mut synced = loop {
             {

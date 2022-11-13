@@ -8,9 +8,72 @@ use crate::signal::*;
 
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
 
+use std::error::Error as StdError;
+use std::fmt;
+
 pub use cpal::Device;
 
-use std::error::Error;
+#[derive(Debug)]
+enum ErrorVariant {
+    BuildStreamInvalidArgument(&'static str),
+    BuildStreamDriverError(cpal::BuildStreamError),
+    PlayStreamDriverError(cpal::PlayStreamError),
+    PauseStreamDriverError(cpal::PauseStreamError),
+}
+
+/// Error related to audio I/O
+#[derive(Debug)]
+pub struct Error(ErrorVariant);
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ErrorVariant::*;
+        match &self.0 {
+            BuildStreamInvalidArgument(s) => {
+                write!(f, "invalid argument when opening audio device: {s}")
+            }
+            BuildStreamDriverError(_) => write!(f, "could not open audio device"),
+            PlayStreamDriverError(_) => write!(f, "could start audio stream"),
+            PauseStreamDriverError(_) => write!(f, "could pause audio stream"),
+        }
+    }
+}
+
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        use ErrorVariant::*;
+        match &self.0 {
+            BuildStreamInvalidArgument(_) => None,
+            BuildStreamDriverError(inner) => Some(inner),
+            PlayStreamDriverError(inner) => Some(inner),
+            PauseStreamDriverError(inner) => Some(inner),
+        }
+    }
+}
+
+impl Error {
+    fn invalid_argument(msg: &'static str) -> Self {
+        Self(ErrorVariant::BuildStreamInvalidArgument(msg))
+    }
+}
+
+impl From<cpal::BuildStreamError> for Error {
+    fn from(inner: cpal::BuildStreamError) -> Self {
+        Self(ErrorVariant::BuildStreamDriverError(inner))
+    }
+}
+
+impl From<cpal::PlayStreamError> for Error {
+    fn from(inner: cpal::PlayStreamError) -> Self {
+        Self(ErrorVariant::PlayStreamDriverError(inner))
+    }
+}
+
+impl From<cpal::PauseStreamError> for Error {
+    fn from(inner: cpal::PauseStreamError) -> Self {
+        Self(ErrorVariant::PauseStreamDriverError(inner))
+    }
+}
 
 /// Retrieve default device for audio output
 ///
@@ -43,7 +106,7 @@ impl_block_trait! { EventHandling for AudioPlayer }
 impl AudioPlayer {
     /// Create block for audio playback with given `sample_rate` and optionally
     /// requested `buffer_size`
-    pub fn new(sample_rate: f64, buffer_size: Option<usize>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(sample_rate: f64, buffer_size: Option<usize>) -> Result<Self, Error> {
         Self::with_device(&default_output_device(), sample_rate, buffer_size)
     }
     /// Create block for audio playback with given `sample_rate` and optionally
@@ -52,15 +115,17 @@ impl AudioPlayer {
         device: &cpal::Device,
         sample_rate: f64,
         buffer_size: Option<usize>,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> Result<Self, Error> {
         let config = cpal::StreamConfig {
             channels: 1,
             sample_rate: cpal::SampleRate(sample_rate.round() as u32),
             buffer_size: match buffer_size {
                 None => cpal::BufferSize::Default,
-                Some(value) => {
-                    cpal::BufferSize::Fixed(value.try_into().or(Err("invalid buffer size"))?)
-                }
+                Some(value) => cpal::BufferSize::Fixed(
+                    value
+                        .try_into()
+                        .or(Err(Error::invalid_argument("invalid buffer size")))?,
+                ),
             },
         };
         let rt = tokio::runtime::Handle::current();
@@ -106,12 +171,12 @@ impl AudioPlayer {
         })
     }
     /// Resume playback
-    pub fn resume(&self) -> Result<(), Box<dyn Error>> {
+    pub fn resume(&self) -> Result<(), Error> {
         self.stream.play()?;
         Ok(())
     }
     /// Pause playback
-    pub fn pause(&self) -> Result<(), Box<dyn Error>> {
+    pub fn pause(&self) -> Result<(), Error> {
         self.stream.pause()?;
         Ok(())
     }
@@ -132,7 +197,7 @@ impl Producer<Signal<Complex<f32>>> for AudioRecorder {
 impl AudioRecorder {
     /// Create block for audio recording with given `sample_rate` and
     /// optionally requested `buffer_size`
-    pub fn new(sample_rate: f64, buffer_size: Option<usize>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(sample_rate: f64, buffer_size: Option<usize>) -> Result<Self, Error> {
         Self::with_device(&default_input_device(), sample_rate, buffer_size)
     }
     /// Create block for audio recording with given `sample_rate` and
@@ -141,15 +206,17 @@ impl AudioRecorder {
         device: &cpal::Device,
         sample_rate: f64,
         buffer_size: Option<usize>,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> Result<Self, Error> {
         let config = cpal::StreamConfig {
             channels: 1,
             sample_rate: cpal::SampleRate(sample_rate.round() as u32),
             buffer_size: match buffer_size {
                 None => cpal::BufferSize::Default,
-                Some(value) => {
-                    cpal::BufferSize::Fixed(value.try_into().or(Err("invalid buffer size"))?)
-                }
+                Some(value) => cpal::BufferSize::Fixed(
+                    value
+                        .try_into()
+                        .or(Err(Error::invalid_argument("invalid buffer size")))?,
+                ),
             },
         };
         let rt = tokio::runtime::Handle::current();
@@ -175,12 +242,12 @@ impl AudioRecorder {
         })
     }
     /// Resume recording
-    pub fn resume(&self) -> Result<(), Box<dyn Error>> {
+    pub fn resume(&self) -> Result<(), Error> {
         self.stream.play()?;
         Ok(())
     }
     /// Pause recording
-    pub fn pause(&self) -> Result<(), Box<dyn Error>> {
+    pub fn pause(&self) -> Result<(), Error> {
         self.stream.pause()?;
         Ok(())
     }

@@ -2,6 +2,7 @@
 
 use crate::bufferpool::*;
 use crate::flow::*;
+use crate::impl_block_trait;
 use crate::numbers::*;
 use crate::signal::*;
 
@@ -34,7 +35,7 @@ impl Default for SoapySdrRxState {
     }
 }
 
-/// Block which wraps an [`soapysdr::RxStream`] and acts as a
+/// Block which wraps an [`::soapysdr::RxStream`] and acts as a
 /// [`Producer<Signal<Complex<Flt>>>`]
 pub struct SoapySdrRx {
     sender: Sender<Signal<Complex<f32>>>,
@@ -43,11 +44,7 @@ pub struct SoapySdrRx {
     state: Mutex<SoapySdrRxState>,
 }
 
-impl Producer<Signal<Complex<f32>>> for SoapySdrRx {
-    fn sender_connector(&self) -> &SenderConnector<Signal<Complex<f32>>> {
-        &self.sender_connector
-    }
-}
+impl_block_trait! { Producer<Signal<Complex<f32>>> for SoapySdrRx }
 
 impl SoapySdrRx {
     /// Create new [`SoapySdrRx`] block

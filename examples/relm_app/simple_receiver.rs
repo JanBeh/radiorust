@@ -52,14 +52,6 @@ impl SimpleSdr {
         let downsample2 = blocks::Downsampler::<f32>::new(4096, 48000.0, 2.0 * 20000.0);
         downsample2.feed_from(&filter2);
 
-        /*
-        let writer = blocks::io::raw::ContinuousF32BeWriter::with_path("output.raw");
-        writer.feed_from(&downsample2);
-        tokio::spawn(async move {
-            writer.wait().await.ok();
-        });
-        */
-
         let volume = blocks::GainControl::<f32>::new(1.0);
         volume.feed_from(&downsample2);
 

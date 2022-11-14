@@ -25,12 +25,6 @@ async fn main() {
     audio_mod.feed_from(&volume);
     let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
     playback.feed_from(&audio_mod);
-    /*
-    let writer = blocks::io::raw::ContinuousF32BeWriter::new(std::io::BufWriter::new(
-        std::fs::File::create("output.raw").unwrap(),
-    ));
-    writer.feed_from(&audio_mod);
-    */
     let mut rl = rustyline::Editor::<()>::new().unwrap();
     loop {
         match rl.readline("Enter morse message> ") {

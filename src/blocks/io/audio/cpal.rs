@@ -132,7 +132,7 @@ impl AudioPlayer {
         let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
         let event_handlers = EventHandlers::new();
         let evhdl_clone = event_handlers.clone();
-        let err_fn = move |err| panic!("audio error callback invoked: {err}");
+        let err_fn = move |err| panic!("error during audio playback: {err}");
         let mut current_chunk_and_pos: Option<(Chunk<Complex<f32>>, usize)> = None;
         let write_audio = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             for sample in data.iter_mut() {
@@ -221,7 +221,7 @@ impl AudioRecorder {
         };
         let rt = tokio::runtime::Handle::current();
         let (sender, sender_connector) = new_sender::<Signal<Complex<f32>>>();
-        let err_fn = move |err| panic!("audio error callback invoked: {err}");
+        let err_fn = move |err| panic!("error during audio recording: {err}");
         let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
         let read_audio = move |data: &[f32], _: &cpal::InputCallbackInfo| {
             let mut output_chunk = buf_pool.get_with_capacity(data.len());

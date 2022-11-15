@@ -48,6 +48,10 @@ name = "morse"
 required-features = ["cpal"]
 
 [[example]]
+name = "morse_rf"
+required-features = ["cpal", "soapysdr"]
+
+[[example]]
 name = "bandwidth_meter"
 required-features = ["soapysdr"]
 

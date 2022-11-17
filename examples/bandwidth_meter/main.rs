@@ -48,7 +48,7 @@ async fn main() {
     device.set_sample_rate(Rx, 0, sample_rate).unwrap();
     device.set_bandwidth(Rx, 0, bandwidth).unwrap();
     let rx_stream = device.rx_stream::<Complex<f32>>(&[0]).unwrap();
-    let mut sdr_rx = blocks::io::rf::soapysdr::SoapySdrRx::new(rx_stream, sample_rate);
+    let sdr_rx = blocks::io::rf::soapysdr::SoapySdrRx::new(rx_stream, sample_rate);
     sdr_rx.activate().await.unwrap();
     let freq_shifter = blocks::FreqShifter::<f32>::with_shift(freq_offset);
     println!("Frequency: {}", hw_frequency - freq_offset);

@@ -52,7 +52,7 @@ async fn main() {
         .set_sample_rate(soapysdr::Direction::Tx, 0, 128000.0)
         .unwrap();
     let tx_stream = device.tx_stream::<Complex<f32>>(&[0]).unwrap();
-    let mut sdr_tx = blocks::io::rf::soapysdr::SoapySdrTx::new(tx_stream);
+    let sdr_tx = blocks::io::rf::soapysdr::SoapySdrTx::new(tx_stream);
     sdr_tx.feed_from(&rf_mod);
     tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
     sdr_tx.activate().await.unwrap();

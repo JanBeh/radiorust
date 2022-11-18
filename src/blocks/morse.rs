@@ -18,11 +18,11 @@ use std::sync::Arc;
 
 /// Types used as [`Signal::Event::payload`]
 pub mod events {
-    /// Sent by [`Keyer`] block as [`Signal::event::payload`] when all morse
+    /// Sent by [`Keyer`] block as [`Signal::Event::payload`] when all morse
     /// messages have been sent.
     ///
     /// [`Keyer`]: super::Keyer
-    /// [`Signal::event::payload`]: crate::signal::Signal::Event::payload
+    /// [`Signal::Event::payload`]: crate::signal::Signal::Event::payload
     #[derive(Clone, Debug)]
     pub struct EndOfMessages;
 }

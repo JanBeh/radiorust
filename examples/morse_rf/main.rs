@@ -1,6 +1,8 @@
 use clap::Parser;
 use radiorust::prelude::*;
 
+use std::sync::{Arc, Condvar, Mutex};
+
 #[derive(Parser, Debug)]
 #[command(
     version,
@@ -14,19 +16,21 @@ struct Args {
     /// Frequency in MHz
     #[arg(short = 'f', long)]
     frequency: f64,
-    /// Callsign
-    #[arg(short = 'c', long, default_value = "")]
-    callsign: String,
+    /// Gain in dB
+    #[arg(short = 'g', long)]
+    gain: f64,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    let busy_recv = Arc::new((Mutex::new(false), Condvar::new()));
+    let busy_send = busy_recv.clone();
     let keyer = blocks::morse::Keyer::<f32>::with_message(
-        65536,
+        16384,
         128000.0,
         blocks::morse::Speed::from_paris_wpm(16.0),
-        &format!("VVV <CT> DE {} <AR>", args.callsign),
+        "VVV",
     )
     .unwrap();
     let limiter = blocks::filters::SlewRateLimiter::new(100.0);
@@ -44,7 +48,9 @@ async fn main() {
     let rf_mod = blocks::modulation::FmMod::new(2500.0);
     rf_mod.feed_from(&audio_mod);
     let device = soapysdr::Device::new(args.device_options.as_str()).unwrap();
-    device.set_gain(soapysdr::Direction::Tx, 0, 64.0).unwrap();
+    device
+        .set_gain(soapysdr::Direction::Tx, 0, args.gain)
+        .unwrap();
     device
         .set_frequency(soapysdr::Direction::Tx, 0, args.frequency * 1e6, "")
         .unwrap();
@@ -53,11 +59,51 @@ async fn main() {
         .unwrap();
     let tx_stream = device.tx_stream::<Complex<f32>>(&[0]).unwrap();
     let sdr_tx = blocks::io::rf::soapysdr::SoapySdrTx::new(tx_stream);
-    sdr_tx.feed_from(&rf_mod);
-    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
-    sdr_tx.activate().await.unwrap();
+    // Track whether a transmission is in progress:
     sdr_tx
-        .wait_for_event(|payload| payload.is::<blocks::morse::events::EndOfMessages>())
-        .await;
+        .on_event(move |payload| {
+            let (busy_lock, busy_cvar) = &*busy_send;
+            if payload.is::<blocks::morse::events::StartOfMessages>() {
+                let mut busy = busy_lock.lock().unwrap();
+                *busy = true;
+                busy_cvar.notify_all();
+            }
+            if payload.is::<blocks::morse::events::EndOfMessages>() {
+                let mut busy = busy_lock.lock().unwrap();
+                *busy = false;
+                busy_cvar.notify_all();
+            }
+        })
+        .forget();
+    sdr_tx.feed_from(&rf_mod);
+    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+    sdr_tx.activate().await.unwrap();
+    let mut rl = rustyline::Editor::<()>::new().unwrap();
+    loop {
+        match rl.readline("Enter morse message> ") {
+            Ok(line) => {
+                let line = line.trim();
+                if line.is_empty() {
+                    println!("Empty message, exiting.");
+                    break;
+                }
+                if keyer.send(&line).is_err() {
+                    println!("Invalid character!");
+                }
+            }
+            Err(err) => {
+                println!("Error: {err}");
+                break;
+            }
+        }
+    }
+    // Wait if there is a transmission in progress:
+    {
+        let (busy_lock, busy_cvar) = &*busy_recv;
+        let mut busy = busy_lock.lock().unwrap();
+        while *busy {
+            busy = busy_cvar.wait(busy).unwrap();
+        }
+    }
     sdr_tx.deactivate().await.unwrap();
 }

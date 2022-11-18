@@ -18,6 +18,13 @@ use std::sync::Arc;
 
 /// Types used as [`Signal::Event::payload`]
 pub mod events {
+    /// Sent by [`Keyer`] block as [`Signal::Event::payload`] before morse
+    /// messages are being sent.
+    ///
+    /// [`Keyer`]: super::Keyer
+    /// [`Signal::Event::payload`]: crate::signal::Signal::Event::payload
+    #[derive(Clone, Debug)]
+    pub struct StartOfMessages;
     /// Sent by [`Keyer`] block as [`Signal::Event::payload`] when all morse
     /// messages have been sent.
     ///
@@ -326,12 +333,19 @@ where
                 empty_chunk_buf.push(Complex::from(Flt::zero()));
             }
             let empty_chunk = empty_chunk_buf.finalize();
-            let mut idle = false;
+            let mut idle = true;
             let mut output_chunk = buf_pool.get_with_capacity(chunk_len);
             loop {
                 match messages_recv.try_recv() {
                     Ok(units) => {
-                        idle = false;
+                        if idle {
+                            let Ok(()) = sender.send(Signal::Event {
+                                interrupt: false,
+                                payload: Arc::new(StartOfMessages),
+                            }).await
+                            else { return; };
+                            idle = false;
+                        }
                         let mut unit_iter = units.into_iter();
                         loop {
                             if remaining_samples == 0 {

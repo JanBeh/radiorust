@@ -240,6 +240,11 @@ impl SoapySdrTx {
     /// The passed `tx_stream` should not have been activated at this point.
     /// Instead, the stream must be activated by invoking
     /// [`SoapySdrTx::activate`].
+    ///
+    /// Use [`::soapysdr::TxStream::mtu`] to determine optimal chunk size
+    /// before passing the [`TxStream`] to this `new` function.
+    ///
+    /// [`TxStream`]: ::soapysdr::TxStream
     pub fn new(mut tx_stream: soapysdr::TxStream<Complex<f32>>) -> Self {
         let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
         let (request_send, mut request_recv) = watch::channel(Request::Deactivate);

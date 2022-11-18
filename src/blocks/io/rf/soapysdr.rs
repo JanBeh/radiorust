@@ -306,6 +306,15 @@ impl SoapySdrTx {
                                     .unwrap();
                                     if let Err(err) = result {
                                         tx_stream = spawn_blocking(move || {
+                                            tx_stream.write_all(
+                                                &[&[Complex::new(0.0f32, 0.0f32)]],
+                                                None, false, 1000000,
+                                            ).ok();
+                                            tx_stream
+                                        })
+                                        .await
+                                        .unwrap();
+                                        tx_stream = spawn_blocking(move || {
                                             tx_stream.deactivate(None).ok();
                                             tx_stream
                                         })
@@ -318,6 +327,27 @@ impl SoapySdrTx {
                             }
                         },
                     }
+                }
+                let result;
+                (result, tx_stream) = spawn_blocking(move || {
+                    let result = tx_stream.write_all(
+                        &[&[Complex::new(0.0f32, 0.0f32)]],
+                        None,
+                        false,
+                        1000000,
+                    );
+                    (result, tx_stream)
+                })
+                .await
+                .unwrap();
+                if let Err(err) = result {
+                    tx_stream = spawn_blocking(move || {
+                        tx_stream.deactivate(None).ok();
+                        tx_stream
+                    })
+                    .await
+                    .unwrap();
+                    break 'task Err(err);
                 }
                 let result;
                 (result, tx_stream) = spawn_blocking(move || {

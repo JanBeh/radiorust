@@ -351,6 +351,10 @@ where
             slew_rate: slew_rate_send,
         }
     }
+    /// Get slew rate
+    pub fn slew_rate(&self) -> f64 {
+        self.slew_rate.borrow().clone()
+    }
     /// Set slew rate
     pub fn set_slew_rate(&self, slew_rate: f64) {
         self.slew_rate.send_replace(slew_rate);

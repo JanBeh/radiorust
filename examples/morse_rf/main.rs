@@ -24,10 +24,23 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let busy_recv = Arc::new((Mutex::new(false), Condvar::new()));
-    let busy_send = busy_recv.clone();
+    let busy_send = Arc::new((Mutex::new(false), Condvar::new()));
+    let busy_recv1 = busy_send.clone();
+    let busy_recv2 = busy_send.clone();
+    let device = soapysdr::Device::new(args.device_options.as_str()).unwrap();
+    device
+        .set_gain(soapysdr::Direction::Tx, 0, args.gain)
+        .unwrap();
+    device
+        .set_frequency(soapysdr::Direction::Tx, 0, args.frequency * 1e6, "")
+        .unwrap();
+    device
+        .set_sample_rate(soapysdr::Direction::Tx, 0, 128000.0)
+        .unwrap();
+    let tx_stream = device.tx_stream::<Complex<f32>>(&[0]).unwrap();
+    let mtu: usize = tx_stream.mtu().unwrap();
     let keyer = blocks::morse::Keyer::<f32>::with_message(
-        16384,
+        mtu,
         128000.0,
         blocks::morse::Speed::from_paris_wpm(16.0),
         "VVV",
@@ -47,18 +60,7 @@ async fn main() {
     audio_mod.feed_from(&filter);
     let rf_mod = blocks::modulation::FmMod::new(2500.0);
     rf_mod.feed_from(&audio_mod);
-    let device = soapysdr::Device::new(args.device_options.as_str()).unwrap();
-    device
-        .set_gain(soapysdr::Direction::Tx, 0, args.gain)
-        .unwrap();
-    device
-        .set_frequency(soapysdr::Direction::Tx, 0, args.frequency * 1e6, "")
-        .unwrap();
-    device
-        .set_sample_rate(soapysdr::Direction::Tx, 0, 128000.0)
-        .unwrap();
-    let tx_stream = device.tx_stream::<Complex<f32>>(&[0]).unwrap();
-    let sdr_tx = blocks::io::rf::soapysdr::SoapySdrTx::new(tx_stream);
+    let sdr_tx = Arc::new(blocks::io::rf::soapysdr::SoapySdrTx::new(tx_stream));
     // Track whether a transmission is in progress:
     sdr_tx
         .on_event(move |payload| {
@@ -78,6 +80,18 @@ async fn main() {
     sdr_tx.feed_from(&rf_mod);
     tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
     sdr_tx.activate().await.unwrap();
+    let sdr_tx_clone = sdr_tx.clone();
+    let rt = tokio::runtime::Handle::current();
+    std::thread::spawn(move || {
+        let (busy_lock, busy_cvar) = &*busy_recv1;
+        let mut busy = busy_lock.lock().unwrap();
+        loop {
+            if !*busy {
+                rt.block_on(sdr_tx_clone.deactivate()).unwrap();
+            }
+            busy = busy_cvar.wait(busy).unwrap();
+        }
+    });
     let mut rl = rustyline::Editor::<()>::new().unwrap();
     loop {
         match rl.readline("Enter morse message> ") {
@@ -87,8 +101,9 @@ async fn main() {
                     println!("Empty message, exiting.");
                     break;
                 }
-                if keyer.send(&line).is_err() {
-                    println!("Invalid character!");
+                match keyer.send(&line) {
+                    Ok(()) => sdr_tx.activate().await.unwrap(),
+                    Err(_) => println!("Invalid character!"),
                 }
             }
             Err(err) => {
@@ -99,7 +114,7 @@ async fn main() {
     }
     // Wait if there is a transmission in progress:
     {
-        let (busy_lock, busy_cvar) = &*busy_recv;
+        let (busy_lock, busy_cvar) = &*busy_recv2;
         let mut busy = busy_lock.lock().unwrap();
         while *busy {
             busy = busy_cvar.wait(busy).unwrap();

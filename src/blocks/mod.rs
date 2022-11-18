@@ -79,6 +79,7 @@ pub mod prelude {
     pub use super::buffering::Buffer;
     pub use super::chunks::{Overlapper, Rechunker};
     pub use super::filters::Filter;
+    pub use super::io::{Blackhole, Silence};
     pub use super::resampling::{Downsampler, Upsampler};
     pub use super::transform::{FreqShifter, GainControl, MapSample};
 }

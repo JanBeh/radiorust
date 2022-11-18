@@ -38,19 +38,14 @@ where
         let (chunk_size_send, mut chunk_size_recv) = watch::channel(chunk_size);
         let (sample_rate_send, mut sample_rate_recv) = watch::channel(sample_rate);
         spawn(async move {
-            let mut buf_pool = ChunkBufPool::new();
-            let mut chunk_buf = buf_pool.get_with_capacity(chunk_size);
-            chunk_buf.resize(chunk_size, T::zero());
-            let mut chunk = chunk_buf.finalize();
+            let mut chunk = Chunk::from(vec![T::zero(); chunk_size]);
             loop {
                 match chunk_size_recv.has_changed() {
                     Ok(false) => (),
                     Ok(true) => {
                         chunk_size = chunk_size_recv.borrow_and_update().clone();
                         if chunk.len() != chunk_size {
-                            let mut chunk_buf = buf_pool.get_with_capacity(chunk_size);
-                            chunk_buf.resize(chunk_size, T::zero());
-                            chunk = chunk_buf.finalize();
+                            chunk = Chunk::from(vec![T::zero(); chunk_size]);
                         }
                     }
                     Err(_) => return,

@@ -243,10 +243,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_rechunker() {
-        let mut buf_pool = ChunkBufPool::<u8>::new();
-        let mut buffer = buf_pool.get();
-        buffer.extend_from_slice(&vec![0; 4096]);
-        let buffer = buffer.finalize();
+        let chunk = Chunk::from(vec![0; 4096]);
         let (sender, sender_connector) = new_sender();
         let rechunk = Rechunker::<u8>::new(1024);
         let (mut receiver, receiver_connector) = new_receiver();
@@ -256,7 +253,7 @@ mod tests {
             _ = async move {
                 loop {
                     sender.send(Signal::Samples {
-                        chunk: buffer.clone(),
+                        chunk: chunk.clone(),
                         sample_rate: 1.0,
                     }).await.unwrap();
                 }

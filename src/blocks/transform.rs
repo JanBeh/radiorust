@@ -400,15 +400,10 @@ mod tests {
         let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
         attenuator.feed_from(&sender_connector);
         attenuator.feed_into(&receiver_connector);
-        let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(32.0, -1.0));
-        chunk_buf.push(Complex::new(15.0, -2.0));
-        let chunk = chunk_buf.finalize();
         sender
             .send(Signal::Samples {
                 sample_rate: 48000.0,
-                chunk,
+                chunk: Chunk::from(vec![Complex::new(32.0, -1.0), Complex::new(15.0, -2.0)]),
             })
             .await
             .unwrap();

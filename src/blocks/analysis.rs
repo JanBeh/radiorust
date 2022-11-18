@@ -139,15 +139,14 @@ mod tests {
         fourier2.feed_from(&sender_connector);
         fourier1.feed_into(&receiver1_connector);
         fourier2.feed_into(&receiver2_connector);
-        let mut buf_pool = ChunkBufPool::new();
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
         sender
             .send(Signal::Samples {
                 sample_rate: 48000.0,
-                chunk: chunk_buf.finalize(),
+                chunk: Chunk::from(vec![
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.0, 0.0),
+                ]),
             })
             .await
             .unwrap();
@@ -167,15 +166,15 @@ mod tests {
         assert_approx(output2[1].im, 0.0);
         assert_approx(output2[2].re, 0.0);
         assert_approx(output2[2].im, 0.0);
-        let mut chunk_buf = buf_pool.get();
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(1.5, 0.0));
-        chunk_buf.push(Complex::new(1.0, 0.0));
-        chunk_buf.push(Complex::new(0.5, 0.0));
         sender
             .send(Signal::Samples {
                 sample_rate: 48000.0,
-                chunk: chunk_buf.finalize(),
+                chunk: Chunk::from(vec![
+                    Complex::new(1.0, 0.0),
+                    Complex::new(1.5, 0.0),
+                    Complex::new(1.0, 0.0),
+                    Complex::new(0.5, 0.0),
+                ]),
             })
             .await
             .unwrap();

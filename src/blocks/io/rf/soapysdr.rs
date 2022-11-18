@@ -33,8 +33,8 @@ enum State {
 /// [`Producer<Signal<Complex<Flt>>>`]
 pub struct SoapySdrRx {
     sender_connector: SenderConnector<Signal<Complex<f32>>>,
-    request_tx: watch::Sender<Request>,
-    state_rx: watch::Receiver<State>,
+    request_send: watch::Sender<Request>,
+    state_recv: watch::Receiver<State>,
     join_handle: JoinHandle<soapysdr::RxStream<Complex<f32>>>,
 }
 
@@ -48,14 +48,14 @@ impl SoapySdrRx {
     /// [`SoapySdrRx::activate`].
     pub fn new(mut rx_stream: soapysdr::RxStream<Complex<f32>>, sample_rate: f64) -> Self {
         let (sender, sender_connector) = new_sender::<Signal<Complex<f32>>>();
-        let (request_tx, mut request_rx) = watch::channel(Request::Deactivate);
-        let (state_tx, state_rx) = watch::channel(State::Inactive);
+        let (request_send, mut request_recv) = watch::channel(Request::Deactivate);
+        let (state_send, state_recv) = watch::channel(State::Inactive);
         let mtu: usize = rx_stream.mtu().unwrap();
         let join_handle = spawn(async move {
             let result = 'task: loop {
                 loop {
-                    let Ok(()) = request_rx.changed().await else { break 'task Ok(()); };
-                    let request = request_rx.borrow_and_update().clone();
+                    let Ok(()) = request_recv.changed().await else { break 'task Ok(()); };
+                    let request = request_recv.borrow_and_update().clone();
                     match request {
                         Request::Deactivate => (),
                         Request::Activate => break,
@@ -72,13 +72,13 @@ impl SoapySdrRx {
                 if let Err(err) = result {
                     break 'task Err(err);
                 }
-                state_tx.send_replace(State::Active);
+                state_send.send_replace(State::Active);
                 let mut buf_pool = ChunkBufPool::<Complex<f32>>::new();
                 loop {
-                    match request_rx.has_changed() {
+                    match request_recv.has_changed() {
                         Ok(false) => (),
                         Ok(true) => {
-                            let request = request_rx.borrow_and_update().clone();
+                            let request = request_recv.borrow_and_update().clone();
                             match request {
                                 Request::Deactivate => break,
                                 Request::Activate => (),
@@ -134,35 +134,35 @@ impl SoapySdrRx {
                 if let Err(err) = result {
                     break 'task Err(err);
                 }
-                state_tx.send_replace(State::Inactive);
+                state_send.send_replace(State::Inactive);
             };
-            state_tx.send_replace(State::Closed(result));
+            state_send.send_replace(State::Closed(result));
             rx_stream
         });
         Self {
             sender_connector,
-            request_tx,
-            state_rx,
+            request_send,
+            state_recv,
             join_handle,
         }
     }
     /// Activate streaming
     pub async fn activate(&self) -> Result<(), Error> {
-        let mut state_rx = self.state_rx.clone();
-        let state = state_rx.borrow_and_update().clone();
+        let mut state_recv = self.state_recv.clone();
+        let state = state_recv.borrow_and_update().clone();
         match state {
             State::Active => Ok(()),
             State::Inactive => {
-                self.request_tx.send_replace(Request::Activate);
+                self.request_send.send_replace(Request::Activate);
                 loop {
-                    if let Err(_) = state_rx.changed().await {
-                        let state = state_rx.borrow_and_update().clone();
+                    if let Err(_) = state_recv.changed().await {
+                        let state = state_recv.borrow_and_update().clone();
                         match state {
                             State::Closed(result) => return result,
                             _ => panic!("SoapySdrRx task ended unexpectedly"),
                         }
                     }
-                    let state = state_rx.borrow_and_update().clone();
+                    let state = state_recv.borrow_and_update().clone();
                     match state {
                         State::Active => return Ok(()),
                         State::Inactive => (),
@@ -175,20 +175,20 @@ impl SoapySdrRx {
     }
     /// Deactivate streaming
     pub async fn deactivate(&self) -> Result<(), Error> {
-        let mut state_rx = self.state_rx.clone();
-        let state = state_rx.borrow_and_update().clone();
+        let mut state_recv = self.state_recv.clone();
+        let state = state_recv.borrow_and_update().clone();
         match state {
             State::Active => {
-                self.request_tx.send_replace(Request::Deactivate);
+                self.request_send.send_replace(Request::Deactivate);
                 loop {
-                    if let Err(_) = state_rx.changed().await {
-                        let state = state_rx.borrow_and_update().clone();
+                    if let Err(_) = state_recv.changed().await {
+                        let state = state_recv.borrow_and_update().clone();
                         match state {
                             State::Closed(result) => return result,
                             _ => panic!("SoapySdrRx task ended unexpectedly"),
                         }
                     }
-                    let state = state_rx.borrow_and_update().clone();
+                    let state = state_recv.borrow_and_update().clone();
                     match state {
                         State::Active => (),
                         State::Inactive => return Ok(()),
@@ -202,9 +202,9 @@ impl SoapySdrRx {
     }
     /// Deactivate streaming and return inner [`::soapysdr::RxStream`]
     pub async fn into_inner(mut self) -> Result<soapysdr::RxStream<Complex<f32>>, Error> {
-        self.request_tx.send_replace(Request::Close);
+        self.request_send.send_replace(Request::Close);
         let rx_stream = self.join_handle.await.unwrap();
-        let state = self.state_rx.borrow_and_update().clone();
+        let state = self.state_recv.borrow_and_update().clone();
         match state {
             State::Closed(Ok(())) => Ok(rx_stream),
             State::Closed(Err(err)) => Err(err),
@@ -218,8 +218,8 @@ impl SoapySdrRx {
 pub struct SoapySdrTx {
     receiver_connector: ReceiverConnector<Signal<Complex<f32>>>,
     event_handlers: EventHandlers,
-    request_tx: watch::Sender<Request>,
-    state_rx: watch::Receiver<State>,
+    request_send: watch::Sender<Request>,
+    state_recv: watch::Receiver<State>,
     join_handle: JoinHandle<soapysdr::TxStream<Complex<f32>>>,
 }
 
@@ -234,15 +234,15 @@ impl SoapySdrTx {
     /// [`SoapySdrTx::activate`].
     pub fn new(mut tx_stream: soapysdr::TxStream<Complex<f32>>) -> Self {
         let (mut receiver, receiver_connector) = new_receiver::<Signal<Complex<f32>>>();
-        let (request_tx, mut request_rx) = watch::channel(Request::Deactivate);
-        let (state_tx, state_rx) = watch::channel(State::Inactive);
+        let (request_send, mut request_recv) = watch::channel(Request::Deactivate);
+        let (state_send, state_recv) = watch::channel(State::Inactive);
         let event_handlers = EventHandlers::new();
         let evhdl_clone = event_handlers.clone();
         let join_handle = spawn(async move {
             let result = 'task: loop {
                 loop {
-                    let Ok(()) = request_rx.changed().await else { break 'task Ok(()); };
-                    let request = request_rx.borrow_and_update().clone();
+                    let Ok(()) = request_recv.changed().await else { break 'task Ok(()); };
+                    let request = request_recv.borrow_and_update().clone();
                     match request {
                         Request::Deactivate => (),
                         Request::Activate => break,
@@ -259,14 +259,14 @@ impl SoapySdrTx {
                 if let Err(err) = result {
                     break 'task Err(err);
                 }
-                state_tx.send_replace(State::Active);
+                state_send.send_replace(State::Active);
                 let mut block_until: Option<Instant> = None;
                 loop {
                     select! {
-                        changed = request_rx.changed() => match changed {
+                        changed = request_recv.changed() => match changed {
                             Err(_) => break 'task Ok(()),
                             Ok(()) => {
-                                let request = request_rx.borrow_and_update().clone();
+                                let request = request_recv.borrow_and_update().clone();
                                 match request {
                                     Request::Deactivate => break,
                                     Request::Activate => (),
@@ -327,36 +327,36 @@ impl SoapySdrTx {
                 if let Err(err) = result {
                     break 'task Err(err);
                 }
-                state_tx.send_replace(State::Inactive);
+                state_send.send_replace(State::Inactive);
             };
-            state_tx.send_replace(State::Closed(result));
+            state_send.send_replace(State::Closed(result));
             tx_stream
         });
         Self {
             receiver_connector,
             event_handlers,
-            request_tx,
-            state_rx,
+            request_send,
+            state_recv,
             join_handle,
         }
     }
     /// Activate streaming
     pub async fn activate(&self) -> Result<(), soapysdr::Error> {
-        let mut state_rx = self.state_rx.clone();
-        let state = state_rx.borrow_and_update().clone();
+        let mut state_recv = self.state_recv.clone();
+        let state = state_recv.borrow_and_update().clone();
         match state {
             State::Active => Ok(()),
             State::Inactive => {
-                self.request_tx.send_replace(Request::Activate);
+                self.request_send.send_replace(Request::Activate);
                 loop {
-                    if let Err(_) = state_rx.changed().await {
-                        let state = state_rx.borrow_and_update().clone();
+                    if let Err(_) = state_recv.changed().await {
+                        let state = state_recv.borrow_and_update().clone();
                         match state {
                             State::Closed(result) => return result,
                             _ => panic!("SoapySdrTx task ended unexpectedly"),
                         }
                     }
-                    let state = state_rx.borrow_and_update().clone();
+                    let state = state_recv.borrow_and_update().clone();
                     match state {
                         State::Active => return Ok(()),
                         State::Inactive => (),
@@ -369,20 +369,20 @@ impl SoapySdrTx {
     }
     /// Deactivate (pause) streaming
     pub async fn deactivate(&self) -> Result<(), soapysdr::Error> {
-        let mut state_rx = self.state_rx.clone();
-        let state = state_rx.borrow_and_update().clone();
+        let mut state_recv = self.state_recv.clone();
+        let state = state_recv.borrow_and_update().clone();
         match state {
             State::Active => {
-                self.request_tx.send_replace(Request::Deactivate);
+                self.request_send.send_replace(Request::Deactivate);
                 loop {
-                    if let Err(_) = state_rx.changed().await {
-                        let state = state_rx.borrow_and_update().clone();
+                    if let Err(_) = state_recv.changed().await {
+                        let state = state_recv.borrow_and_update().clone();
                         match state {
                             State::Closed(result) => return result,
                             _ => panic!("SoapySdrTx task ended unexpectedly"),
                         }
                     }
-                    let state = state_rx.borrow_and_update().clone();
+                    let state = state_recv.borrow_and_update().clone();
                     match state {
                         State::Active => (),
                         State::Inactive => return Ok(()),
@@ -396,9 +396,9 @@ impl SoapySdrTx {
     }
     /// Deactivate streaming and return inner [`::soapysdr::TxStream`]
     pub async fn into_inner(mut self) -> Result<soapysdr::TxStream<Complex<f32>>, Error> {
-        self.request_tx.send_replace(Request::Close);
+        self.request_send.send_replace(Request::Close);
         let tx_stream = self.join_handle.await.unwrap();
-        let state = self.state_rx.borrow_and_update().clone();
+        let state = self.state_recv.borrow_and_update().clone();
         match state {
             State::Closed(Ok(())) => Ok(tx_stream),
             State::Closed(Err(err)) => Err(err),

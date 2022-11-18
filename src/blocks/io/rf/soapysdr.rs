@@ -215,6 +215,10 @@ impl SoapySdrRx {
 
 /// Block which wraps an [`::soapysdr::TxStream`] and acts as a
 /// [`Producer<Signal<Complex<Flt>>>`]
+///
+/// This implementation will throttle the invocation of
+/// [`::soapysdr::TxStream::write_all`] as a measure against bad driver
+/// implementations which do not provide backpressure.
 pub struct SoapySdrTx {
     receiver_connector: ReceiverConnector<Signal<Complex<f32>>>,
     event_handlers: EventHandlers,

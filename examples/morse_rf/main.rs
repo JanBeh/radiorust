@@ -1,7 +1,11 @@
+//! A2A morse transmitter
+
 use clap::Parser;
 use radiorust::prelude::*;
+use tokio::sync::watch;
+use tokio::task::spawn;
 
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -23,10 +27,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // Parse command line args:
     let args = Args::parse();
-    let busy_send = Arc::new((Mutex::new(false), Condvar::new()));
-    let busy_recv1 = busy_send.clone();
-    let busy_recv2 = busy_send.clone();
+
+    // Prepare `::soapysdr::TxStream`:
     let device = soapysdr::Device::new(args.device_options.as_str()).unwrap();
     device
         .set_gain(soapysdr::Direction::Tx, 0, args.gain)
@@ -38,14 +42,13 @@ async fn main() {
         .set_sample_rate(soapysdr::Direction::Tx, 0, 128000.0)
         .unwrap();
     let tx_stream = device.tx_stream::<Complex<f32>>(&[0]).unwrap();
+
+    // Determine optimal chunk size:
     let mtu: usize = tx_stream.mtu().unwrap();
-    let keyer = blocks::morse::Keyer::<f32>::with_message(
-        mtu,
-        128000.0,
-        blocks::morse::Speed::from_paris_wpm(16.0),
-        "VVV",
-    )
-    .unwrap();
+
+    // Create and connect signal processing blocks:
+    let keyer =
+        blocks::morse::Keyer::<f32>::new(mtu, 128000.0, blocks::morse::Speed::from_paris_wpm(16.0));
     let limiter = blocks::filters::SlewRateLimiter::new(100.0);
     limiter.feed_from(&keyer);
     let filter = blocks::Filter::new(|_, freq| {
@@ -61,37 +64,37 @@ async fn main() {
     let rf_mod = blocks::modulation::FmMod::new(2500.0);
     rf_mod.feed_from(&audio_mod);
     let sdr_tx = Arc::new(blocks::io::rf::soapysdr::SoapySdrTx::new(tx_stream));
-    // Track whether a transmission is in progress:
+    sdr_tx.feed_from(&rf_mod);
+
+    // Track whether a morse transmission is in progress:
+    let (busy_send, mut busy_recv1) = watch::channel(false);
+    let mut busy_recv2 = busy_recv1.clone();
     sdr_tx
         .on_event(move |payload| {
-            let (busy_lock, busy_cvar) = &*busy_send;
+            // NOTE: Event handler is not async and must return quickly
             if payload.is::<blocks::morse::events::StartOfMessages>() {
-                let mut busy = busy_lock.lock().unwrap();
-                *busy = true;
-                busy_cvar.notify_all();
+                busy_send.send_replace(true);
             }
             if payload.is::<blocks::morse::events::EndOfMessages>() {
-                let mut busy = busy_lock.lock().unwrap();
-                *busy = false;
-                busy_cvar.notify_all();
+                busy_send.send_replace(false);
             }
         })
         .forget();
-    sdr_tx.feed_from(&rf_mod);
-    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
-    sdr_tx.activate().await.unwrap();
+
+    // Spawn background task which deactivates transmitter when morse
+    // transmission has ended:
     let sdr_tx_clone = sdr_tx.clone();
-    let rt = tokio::runtime::Handle::current();
-    std::thread::spawn(move || {
-        let (busy_lock, busy_cvar) = &*busy_recv1;
-        let mut busy = busy_lock.lock().unwrap();
+    spawn(async move {
         loop {
-            if !*busy {
-                rt.block_on(sdr_tx_clone.deactivate()).unwrap();
+            let Ok(()) = busy_recv1.changed().await else { return; };
+            let busy = busy_recv1.borrow_and_update().clone();
+            if !busy {
+                sdr_tx_clone.deactivate().await.unwrap();
             }
-            busy = busy_cvar.wait(busy).unwrap();
         }
     });
+
+    // Interactively ask for messages to transmit:
     let mut rl = rustyline::Editor::<()>::new().unwrap();
     loop {
         match rl.readline("Enter morse message> ") {
@@ -112,13 +115,16 @@ async fn main() {
             }
         }
     }
+
     // Wait if there is a transmission in progress:
-    {
-        let (busy_lock, busy_cvar) = &*busy_recv2;
-        let mut busy = busy_lock.lock().unwrap();
-        while *busy {
-            busy = busy_cvar.wait(busy).unwrap();
+    loop {
+        let busy = busy_recv2.borrow_and_update().clone();
+        if !busy {
+            break;
         }
+        busy_recv2.changed().await.unwrap();
     }
+
+    // Deactivate transmitter:
     sdr_tx.deactivate().await.unwrap();
 }

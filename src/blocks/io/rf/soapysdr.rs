@@ -216,9 +216,13 @@ impl SoapySdrRx {
 /// Block which wraps an [`::soapysdr::TxStream`] and acts as a
 /// [`Producer<Signal<Complex<Flt>>>`]
 ///
-/// This implementation will throttle the invocation of
-/// [`::soapysdr::TxStream::write_all`] as a measure against bad driver
-/// implementations which do not provide backpressure.
+/// As a workaround for bad driver implementations, the following extra
+/// measures are taken by the `SoapySdrTx` block:
+///
+/// * Invocation of [`::soapysdr::TxStream::write_all`] is throttled to cope
+///   with implementations which do not provide backpressure.
+/// * Upon creation of the block, a zero sample is transmitted to silence the
+///   transmitter.
 pub struct SoapySdrTx {
     receiver_connector: ReceiverConnector<Signal<Complex<f32>>>,
     event_handlers: EventHandlers,
@@ -243,7 +247,53 @@ impl SoapySdrTx {
         let event_handlers = EventHandlers::new();
         let evhdl_clone = event_handlers.clone();
         let join_handle = spawn(async move {
+            let mut first_run = true;
             let result = 'task: loop {
+                if first_run {
+                    let result;
+                    (result, tx_stream) = spawn_blocking(move || {
+                        let result = tx_stream.activate(None);
+                        (result, tx_stream)
+                    })
+                    .await
+                    .unwrap();
+                    if let Err(err) = result {
+                        break 'task Err(err);
+                    }
+                    first_run = false;
+                }
+                let result;
+                (result, tx_stream) = spawn_blocking(move || {
+                    let result = tx_stream.write_all(
+                        &[&[Complex::new(0.0f32, 0.0f32)]],
+                        None,
+                        false,
+                        1000000,
+                    );
+                    (result, tx_stream)
+                })
+                .await
+                .unwrap();
+                if let Err(err) = result {
+                    tx_stream = spawn_blocking(move || {
+                        tx_stream.deactivate(None).ok();
+                        tx_stream
+                    })
+                    .await
+                    .unwrap();
+                    break 'task Err(err);
+                }
+                let result;
+                (result, tx_stream) = spawn_blocking(move || {
+                    let result = tx_stream.deactivate(None);
+                    (result, tx_stream)
+                })
+                .await
+                .unwrap();
+                if let Err(err) = result {
+                    break 'task Err(err);
+                }
+                state_send.send_replace(State::Inactive);
                 loop {
                     let Ok(()) = request_recv.changed().await else { break 'task Ok(()); };
                     let request = request_recv.borrow_and_update().clone();
@@ -332,38 +382,6 @@ impl SoapySdrTx {
                         },
                     }
                 }
-                let result;
-                (result, tx_stream) = spawn_blocking(move || {
-                    let result = tx_stream.write_all(
-                        &[&[Complex::new(0.0f32, 0.0f32)]],
-                        None,
-                        false,
-                        1000000,
-                    );
-                    (result, tx_stream)
-                })
-                .await
-                .unwrap();
-                if let Err(err) = result {
-                    tx_stream = spawn_blocking(move || {
-                        tx_stream.deactivate(None).ok();
-                        tx_stream
-                    })
-                    .await
-                    .unwrap();
-                    break 'task Err(err);
-                }
-                let result;
-                (result, tx_stream) = spawn_blocking(move || {
-                    let result = tx_stream.deactivate(None);
-                    (result, tx_stream)
-                })
-                .await
-                .unwrap();
-                if let Err(err) = result {
-                    break 'task Err(err);
-                }
-                state_send.send_replace(State::Inactive);
             };
             state_send.send_replace(State::Closed(result));
             tx_stream

@@ -297,7 +297,9 @@ impl SoapySdrTx {
                                     }
                                     let result;
                                     (result, tx_stream) = spawn_blocking(move || {
-                                        let result = tx_stream.write_all(&[&chunk], None, false, 1000000);
+                                        let result = tx_stream.write_all(
+                                            &[&chunk], None, false, 1000000,
+                                        );
                                         (result, tx_stream)
                                     })
                                     .await

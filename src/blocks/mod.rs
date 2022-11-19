@@ -130,7 +130,7 @@ macro_rules! impl_block_trait {
             fn on_event<F>(&self, func: F) -> $crate::signal::EventHandlerGuard
             where
                 F:
-                    FnMut(&::std::sync::Arc<
+                    ::std::ops::FnMut(&::std::sync::Arc<
                         dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync
                     >) + ::std::marker::Send + 'static
             {

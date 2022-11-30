@@ -70,12 +70,15 @@ async fn main() {
     let (busy_send, mut busy_recv1) = watch::channel(false);
     let mut busy_recv2 = busy_recv1.clone();
     sdr_tx
-        .on_event(move |payload| {
+        .on_event(move |event| {
             // NOTE: Event handler is not async and must return quickly
-            if payload.is::<blocks::morse::events::StartOfMessages>() {
+            if event
+                .as_any()
+                .is::<blocks::morse::events::StartOfMessages>()
+            {
                 busy_send.send_replace(true);
             }
-            if payload.is::<blocks::morse::events::EndOfMessages>() {
+            if event.as_any().is::<blocks::morse::events::EndOfMessages>() {
                 busy_send.send_replace(false);
             }
         })

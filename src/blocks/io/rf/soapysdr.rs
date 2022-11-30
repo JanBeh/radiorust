@@ -382,7 +382,7 @@ impl SoapySdrTx {
                                         break 'task Err(err);
                                     }
                                 }
-                                Signal::Event { payload, .. } => evhdl_clone.invoke(&payload),
+                                Signal::Event(event) => evhdl_clone.invoke(&event),
                             }
                         },
                     }

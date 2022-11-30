@@ -9,20 +9,24 @@ use tokio::task::spawn;
 
 use std::collections::VecDeque;
 use std::future::pending;
-use std::sync::Arc;
 use std::time::Instant;
 
 const QUEUE_MAX_EVENTS: usize = 256;
 
-/// Types used as [`Signal::Event::payload`]
+/// Types used for [`Signal::Event`]
 pub mod events {
-    /// Sent by [`Buffer`] block as [`Signal::Event::payload`] when some
-    /// samples have been dropped
-    ///
-    /// [`Buffer`]: super::Buffer
-    /// [`Signal::Event::payload`]: crate::signal::Signal::Event::payload
+    use super::*;
+    /// Sent by [`Buffer`] block when some samples have been dropped
     #[derive(Clone, Debug)]
     pub struct BufferOverflow;
+    impl Event for BufferOverflow {
+        fn is_interrupt(&self) -> bool {
+            true
+        }
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
 }
 use events::*;
 
@@ -209,10 +213,10 @@ where
                                         queue.pop();
                                     }
                                     if !marked_missing {
-                                        reservation.take().unwrap().send(Signal::Event {
-                                            interrupt: true,
-                                            payload: Arc::new(BufferOverflow),
-                                        });
+                                        reservation
+                                            .take()
+                                            .unwrap()
+                                            .send(Signal::new_event(BufferOverflow));
                                         marked_missing = true;
                                     }
                                 }
@@ -234,10 +238,10 @@ where
                                 }
                             }
                             if !marked_missing {
-                                reservation.take().unwrap().send(Signal::Event {
-                                    interrupt: true,
-                                    payload: Arc::new(BufferOverflow),
-                                });
+                                reservation
+                                    .take()
+                                    .unwrap()
+                                    .send(Signal::new_event(BufferOverflow));
                                 marked_missing = true;
                             }
                         }

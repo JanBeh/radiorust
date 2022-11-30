@@ -151,7 +151,7 @@ impl AudioPlayer {
                                 );
                                 break (chunk, 0);
                             }
-                            Signal::Event { payload, .. } => evhdl_clone.invoke(&payload),
+                            Signal::Event(event) => evhdl_clone.invoke(&event),
                         }
                     },
                 };

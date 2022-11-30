@@ -11,15 +11,21 @@ use tokio::sync::watch;
 use tokio::task::spawn;
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 
-/// Types used as [`Signal::Event::payload`]
+/// Types used for [`Signal::Event`]
 pub mod events {
-    /// Sent as [`Signal::Event::payload`] when some data was lost
-    ///
-    /// [`Signal::Event::payload`]: crate::signal::Signal::Event::payload
+    use super::*;
+    /// Sent as [`Signal::Event`] when some data was lost
     #[derive(Clone, Debug)]
     pub struct SamplesLost;
+    impl Event for SamplesLost {
+        fn is_interrupt(&self) -> bool {
+            true
+        }
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
 }
 use events::*;
 
@@ -66,10 +72,9 @@ where
                                 if let Some((patchwork_sample_rate, _)) = patchwork_opt {
                                     if sample_rate != patchwork_sample_rate {
                                         patchwork_opt = None;
-                                        let Ok(()) = sender.send(Signal::Event {
-                                            interrupt: true,
-                                            payload: Arc::new(SamplesLost),
-                                        }).await
+                                        let Ok(()) = sender.send(Signal::new_event(
+                                            SamplesLost,
+                                        )).await
                                         else { return; };
                                     }
                                 }
@@ -77,10 +82,9 @@ where
                             }
                             event @ Signal::Event { .. } => {
                                 if patchwork_opt.is_some() {
-                                    let Ok(()) = sender.send(Signal::Event {
-                                        interrupt: true,
-                                        payload: Arc::new(SamplesLost),
-                                    }).await
+                                    let Ok(()) = sender.send(Signal::new_event(
+                                        SamplesLost,
+                                    )).await
                                     else { return; };
                                     patchwork_opt = None;
                                 }
@@ -221,10 +225,9 @@ where
                     }
                     event @ Signal::Event { .. } => {
                         history = VecDeque::new();
-                        let Ok(()) = sender.send(Signal::Event {
-                            interrupt: true,
-                            payload: Arc::new(SamplesLost),
-                        }).await
+                        let Ok(()) = sender.send(Signal::new_event(
+                            SamplesLost,
+                        )).await
                         else { return; };
                         let Ok(()) = sender.send(event).await else { return; };
                     }

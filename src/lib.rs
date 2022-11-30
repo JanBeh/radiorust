@@ -28,8 +28,8 @@
 //!     audio_modulator.feed_from(&morse_keyer);
 //!     let playback = blocks::io::audio::cpal::AudioPlayer::new(48000.0, None).unwrap();
 //!     playback.feed_from(&audio_modulator);
-//!     playback.wait_for_event(|payload| {
-//!         payload.is::<blocks::morse::events::EndOfMessages>()
+//!     playback.wait_for_event(|event| {
+//!         event.as_any().is::<blocks::morse::events::EndOfMessages>()
 //!     }).await;
 //! # }
 //! }

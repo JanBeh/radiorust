@@ -116,7 +116,7 @@ where
                     },
                     result = receiver.recv() => match result {
                         Ok(Signal::Samples { .. }) => (),
-                        Ok(Signal::Event { payload, .. }) => evhdl_clone.invoke(&payload),
+                        Ok(Signal::Event(event)) => evhdl_clone.invoke(&event),
                         Err(_) => return,
                     },
                 }

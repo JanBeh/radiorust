@@ -245,11 +245,11 @@ where
                         }
                         previous_chunk = Some(input_chunk);
                     }
-                    Signal::Event { interrupt, payload } => {
-                        if interrupt {
+                    Signal::Event(event) => {
+                        if event.is_interrupt() {
                             previous_chunk = None;
                         }
-                        let Ok(()) = sender.send(Signal::Event { interrupt, payload }).await
+                        let Ok(()) = sender.send(Signal::Event(event)).await
                         else { return; };
                     }
                 }

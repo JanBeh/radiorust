@@ -9,8 +9,7 @@
 //!
 //! * [`Signal::Samples`], which contains a [`chunk`] of sample data with a
 //!   specified [`sample_rate`] or
-//! * [`Signal::Event`], which may indicate [interruption] of the sample data
-//!   and carries an arbitrary [`payload`].
+//! * [`Signal::Event`], which may indicate [interruption] of the sample data.
 //!
 //! [`Complex<Flt>`] is a complex number where real and imaginary part are of
 //! type `Flt`.
@@ -50,8 +49,7 @@
 //! [`Samples`]: crate::signal::Samples
 //! [`chunk`]: crate::signal::Signal::Samples::chunk
 //! [`sample_rate`]: crate::signal::Signal::Samples::sample_rate
-//! [interruption]: crate::signal::Signal::Event::interrupt
-//! [`payload`]: crate::signal::Signal::Event::payload
+//! [interruption]: crate::signal::Event::is_interrupt
 //! [`Complex<Flt>`]: crate.numbers::Complex
 //! [`Float`]: crate::numbers::Float
 //! [`Producer<T>`]: crate::flow::Producer
@@ -131,7 +129,7 @@ macro_rules! impl_block_trait {
             where
                 F:
                     ::std::ops::FnMut(&::std::sync::Arc<
-                        dyn ::std::any::Any + ::std::marker::Send + ::std::marker::Sync
+                        dyn $crate::signal::Event
                     >) + ::std::marker::Send + 'static
             {
                 $crate::signal::EventHandlers::register(&self.event_handlers, func)
@@ -224,14 +222,9 @@ where
                             .await
                         else { return; };
                     }
-                    Signal::Event { interrupt, payload } => {
-                        if interrupt {
-                            // reset state here (but nothing to do)
-                        }
-                        evhdl_clone.invoke(&payload);
-                        let Ok(()) = sender
-                            .send(Signal::Event { interrupt, payload })
-                            .await
+                    Signal::Event(event) => {
+                        evhdl_clone.invoke(&event);
+                        let Ok(()) = sender.send(Signal::Event(event)).await
                         else { return; };
                     }
                 }

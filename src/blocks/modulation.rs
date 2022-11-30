@@ -130,11 +130,11 @@ where
                         }).await
                         else { return; };
                     }
-                    Signal::Event { interrupt, payload } => {
-                        if interrupt {
+                    Signal::Event(event) => {
+                        if event.is_interrupt() {
                             previous_sample = None;
                         }
-                        let Ok(()) = sender.send(Signal::Event { interrupt, payload }).await
+                        let Ok(()) = sender.send(Signal::Event(event)).await
                         else { return; };
                     }
                 }

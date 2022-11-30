@@ -14,24 +14,26 @@ use tokio::task::spawn;
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
 
-/// Types used as [`Signal::Event::payload`]
+/// Types used for [`Signal::Event`]
 pub mod events {
-    /// Sent by [`Keyer`] block as [`Signal::Event::payload`] before morse
-    /// messages are being sent.
-    ///
-    /// [`Keyer`]: super::Keyer
-    /// [`Signal::Event::payload`]: crate::signal::Signal::Event::payload
+    use super::*;
+    /// Sent by [`Keyer`] block before morse messages are being sent.
     #[derive(Clone, Debug)]
     pub struct StartOfMessages;
-    /// Sent by [`Keyer`] block as [`Signal::Event::payload`] when all morse
-    /// messages have been sent.
-    ///
-    /// [`Keyer`]: super::Keyer
-    /// [`Signal::Event::payload`]: crate::signal::Signal::Event::payload
+    impl Event for StartOfMessages {
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
+    /// Sent by [`Keyer`] block when all morse messages have been sent.
     #[derive(Clone, Debug)]
     pub struct EndOfMessages;
+    impl Event for EndOfMessages {
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
 }
 use events::*;
 
@@ -276,9 +278,7 @@ pub fn encode(text: &str) -> Result<Vec<Unit>, EncodeError> {
 /// If not dropped, the keyer will send silence unless a message has been
 /// queued using [`Keyer::send`]. On drop, message queue is emptied before
 /// sending is stopped. After all messages have been completed, a
-/// [`Signal::Event`] with [`EndOfMessages`] as [`payload`] is sent.
-///
-/// [`payload`]: Signal::Event::payload
+/// [`Signal::Event`] with [`EndOfMessages`] is sent.
 pub struct Keyer<Flt> {
     sender_connector: SenderConnector<Signal<Complex<Flt>>>,
     speed: watch::Sender<Speed>,
@@ -339,10 +339,7 @@ where
                 match messages_recv.try_recv() {
                     Ok(units) => {
                         if idle {
-                            let Ok(()) = sender.send(Signal::Event {
-                                interrupt: false,
-                                payload: Arc::new(StartOfMessages),
-                            }).await
+                            let Ok(()) = sender.send(Signal::new_event(StartOfMessages)).await
                             else { return; };
                             idle = false;
                         }
@@ -396,10 +393,7 @@ where
                             }).await
                             else { return; };
                         } else {
-                            let Ok(()) = sender.send(Signal::Event {
-                                interrupt: false,
-                                payload: Arc::new(EndOfMessages),
-                            }).await
+                            let Ok(()) = sender.send(Signal::new_event(EndOfMessages)).await
                             else { return; };
                             idle = true;
                         }

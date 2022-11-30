@@ -91,13 +91,6 @@ where
     }
 }
 
-/// Unit struct indicating a disconnection
-///
-/// This type is not used by this module but may be used when implementing more
-/// complex [`Message`] types.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Disconnection;
-
 /// Handle to connect a [`Receiver`] to a [`Sender`]
 ///
 /// A `ReceiverConnector` is either obtained when calling [`new_receiver`] or

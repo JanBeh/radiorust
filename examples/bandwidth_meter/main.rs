@@ -92,7 +92,7 @@ async fn main() {
                     i = 0;
                 }
             }
-            Signal::Event { payload, .. } => println!("Event: {payload:?}"),
+            Signal::Event(event) => println!("Event: {event:?}"),
         }
     }
 }

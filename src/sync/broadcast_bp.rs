@@ -6,12 +6,11 @@
 //!
 //! The channel has a fixed capacity of `1`.
 
-use parking_lot::{Mutex, MutexGuard};
 use tokio::sync::Notify;
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Error returned by [`Sender::send`] if there are no [`Enlister`]s or
 /// [`Receiver`]s
@@ -113,9 +112,6 @@ pub struct Enlister<T> {
 }
 
 /// Guarantee to send one value from [`Sender`] to [`Receiver`]s immediately
-///
-/// This type is `!Send`. If you require this to be [`Send`], use the
-/// `send_reservation` feature.
 #[derive(Debug)]
 pub struct Reservation<'a, T> {
     shared: &'a Shared<T>,
@@ -131,7 +127,7 @@ pub struct Receiver<T> {
 
 impl<T> Shared<T> {
     fn subscribe(self: &Arc<Self>) -> Receiver<T> {
-        let mut synced = self.synced.lock();
+        let mut synced = self.synced.lock().unwrap();
         synced.rcvr_count = synced.rcvr_count.checked_add(1).unwrap();
         let slot = synced.slot;
         self.notify_sndr.notify_waiters();
@@ -145,7 +141,7 @@ impl<T> Shared<T> {
 
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced.lock().unwrap();
         synced.sndr_count = synced.sndr_count.checked_add(1).unwrap();
         drop(synced);
         Self {
@@ -156,7 +152,7 @@ impl<T> Clone for Sender<T> {
 
 impl<T> Clone for Enlister<T> {
     fn clone(&self) -> Self {
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced.lock().unwrap();
         synced.elst_count = synced.elst_count.checked_add(1).unwrap();
         drop(synced);
         Self {
@@ -173,7 +169,7 @@ impl<T> Clone for Receiver<T> {
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced.lock().unwrap();
         synced.sndr_count -= 1;
         if synced.sndr_count == 0 {
             self.shared.notify_rcvr.notify_waiters();
@@ -183,7 +179,7 @@ impl<T> Drop for Sender<T> {
 
 impl<T> Drop for Enlister<T> {
     fn drop(&mut self) {
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced.lock().unwrap();
         synced.elst_count -= 1;
         if synced.elst_count == 0 && synced.rcvr_count == 0 {
             self.shared.notify_sndr.notify_waiters();
@@ -193,7 +189,7 @@ impl<T> Drop for Enlister<T> {
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        let mut synced = self.shared.synced.lock();
+        let mut synced = self.shared.synced.lock().unwrap();
         synced.rcvr_count -= 1;
         let mut notify = synced.rcvr_count == 0 && synced.elst_count == 0;
         if self.slot != synced.slot {
@@ -234,7 +230,7 @@ impl<T> Sender<T> {
     pub async fn reserve(&self) -> Result<Reservation<'_, T>, RsrvError> {
         let synced = loop {
             {
-                let synced = self.shared.synced.lock();
+                let synced = self.shared.synced.lock().unwrap();
                 if synced.unseen == 0 && synced.rcvr_count > 0 {
                     break synced;
                 }
@@ -258,7 +254,7 @@ impl<T> Sender<T> {
     /// This method returns `Ok(None)` if it's not possible to send a value
     /// immediately.
     pub fn try_reserve(&self) -> Result<Option<Reservation<'_, T>>, RsrvError> {
-        let synced = self.shared.synced.lock();
+        let synced = self.shared.synced.lock().unwrap();
         if synced.unseen == 0 && synced.rcvr_count > 0 {
             Ok(Some(Reservation {
                 shared: &self.shared,
@@ -313,7 +309,7 @@ where
     pub async fn recv(&mut self) -> Result<T, RecvError> {
         let mut synced = loop {
             {
-                let synced = self.shared.synced.lock();
+                let synced = self.shared.synced.lock().unwrap();
                 if synced.slot != self.slot {
                     break synced;
                 }
@@ -338,14 +334,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
-    #[cfg(feature = "send_reservation")]
-    async fn test_reservation_sendable() {
-        let (sender, enlister) = channel::<i32>();
-        let _receiver = enlister.subscribe();
-        fn takes_send<T: Send>(_: T) {}
-        takes_send(sender.reserve().await.unwrap());
-    }
     #[tokio::test]
     async fn test_broadcast() {
         let (sender, enlister) = channel::<i32>();

@@ -7,13 +7,12 @@
 use crate::bufferpool::Chunk;
 use crate::flow::{Disconnection, Message};
 
-use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
 use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Weak, Mutex};
 
 type BoxedCallback = Box<dyn FnMut(&Arc<dyn Any + Send + Sync>) + Send>;
 
@@ -57,7 +56,7 @@ impl Drop for EventHandlerGuard {
     fn drop(&mut self) {
         if self.auto {
             if let Some(callbacks) = Weak::upgrade(&self.callbacks) {
-                callbacks.lock().callbacks.retain(|x| x.id != self.id);
+                callbacks.lock().unwrap().callbacks.retain(|x| x.id != self.id);
             }
         }
     }
@@ -78,7 +77,7 @@ impl EventHandlers {
         &self,
         func: F,
     ) -> EventHandlerGuard {
-        let mut registry = self.0.lock();
+        let mut registry = self.0.lock().unwrap();
         let boxed_callback: BoxedCallback = Box::new(func);
         let id = registry.next_id;
         registry.next_id += 1;
@@ -97,7 +96,7 @@ impl EventHandlers {
     ///
     /// [`payload`]: `Signal::Event::payload
     pub fn invoke(&self, payload: &Arc<dyn Any + Send + Sync>) {
-        for IdentifiedCallback { callback, .. } in self.0.lock().callbacks.iter_mut() {
+        for IdentifiedCallback { callback, .. } in self.0.lock().unwrap().callbacks.iter_mut() {
             callback(&payload);
         }
     }

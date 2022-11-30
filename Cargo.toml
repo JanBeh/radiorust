@@ -12,7 +12,6 @@ keywords = ["sdr", "radio"]
 full-io = ["cpal", "soapysdr"]
 cpal = ["dep:cpal"]
 soapysdr = ["dep:soapysdr"]
-send_reservation = ["parking_lot/send_guard"]
 
 [dependencies]
 soapysdr = { version = "0.3.2", optional = true }
@@ -20,7 +19,6 @@ num = "0.4.0"
 rustfft = "6.0.1"
 cpal = { version = "0.14.0", optional = true }
 tokio = { version = "1.21.1", features = ["full"] }
-parking_lot = "0.12.1"
 
 [dev-dependencies]
 #relm4 = { version = "0.4.4", features = ["tokio-rt"] }

@@ -7,10 +7,8 @@ use crate::numbers::*;
 use crate::signal::*;
 use crate::windowing::{self, Window};
 
-use rustfft::{Fft, FftPlanner};
+use easyfft::prelude::*;
 use tokio::task::spawn;
-
-use std::sync::Arc;
 
 /// Block performing a Fourier analysis
 ///
@@ -66,7 +64,6 @@ where
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
             let mut previous_chunk_len: Option<usize> = None;
-            let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut scratch: Vec<f64> = Default::default();
             let mut window_values: Vec<Flt> = Default::default();
             loop {
@@ -78,7 +75,6 @@ where
                     } => {
                         let n: usize = input_chunk.len();
                         if Some(n) != previous_chunk_len {
-                            fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n));
                             scratch.clear();
                             scratch.reserve_exact(n);
                             let mut energy: f64 = 0.0;
@@ -101,7 +97,7 @@ where
                         for idx in 0..n {
                             output_chunk[idx] *= window_values[idx];
                         }
-                        fft.as_ref().unwrap().process(&mut output_chunk);
+                        output_chunk.fft_mut();
                         if center_dc {
                             output_chunk.rotate_right(n / 2);
                         }

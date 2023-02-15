@@ -3,7 +3,7 @@
 //! This module re-exports [`num::Complex`] as [`Complex`] and provides a
 //! [`Float`] trait, which is implemented by [`f32`] and [`f64`].
 
-use rustfft::FftNum;
+use easyfft::FftNum;
 
 use std::marker::{Send, Sync};
 
@@ -27,6 +27,7 @@ where
     Self: num::traits::FloatConst,
     Self: num::traits::NumAssignOps,
     Self: FftNum,
+    Self: Default,
 {
 }
 impl<T> Float for T
@@ -36,6 +37,7 @@ where
     T: num::traits::FloatConst,
     T: num::traits::NumAssignOps,
     T: FftNum,
+    Self: Default,
 {
 }
 

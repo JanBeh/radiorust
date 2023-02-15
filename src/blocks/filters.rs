@@ -7,11 +7,9 @@ use crate::numbers::*;
 use crate::signal::*;
 use crate::windowing::{Kaiser, Rectangular, Window};
 
-use rustfft::{Fft, FftPlanner};
+use easyfft::prelude::*;
 use tokio::sync::watch;
 use tokio::task::spawn;
-
-use std::sync::Arc;
 
 /// Complex amplification factor for deemphasis in frequency demodulation
 ///
@@ -162,8 +160,6 @@ where
             let mut prev_sample_rate: Option<f64> = None;
             let mut prev_input_chunk_len: Option<usize> = None;
             let mut previous_chunk: Option<Chunk<Complex<Flt>>> = None;
-            let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
-            let mut ifft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut extended_response: Vec<Complex<Flt>> = Default::default();
             loop {
                 let Ok(signal) = receiver.recv().await else { return; };
@@ -194,9 +190,7 @@ where
                                     response[n - i] = freq_resp_func(-(i as isize), -freq) / scale;
                                 }
                             }
-                            FftPlanner::<f64>::new()
-                                .plan_fft_inverse(n)
-                                .process(&mut response);
+                            response.ifft_mut();
                             for i in 0..(n / 2) {
                                 response.swap(i, i + n / 2);
                             }
@@ -223,19 +217,17 @@ where
                                 re: flt!(x.re),
                                 im: flt!(x.im),
                             }));
-                            fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n * 2));
-                            ifft = Some(FftPlanner::<Flt>::new().plan_fft_inverse(n * 2));
-                            fft.as_ref().unwrap().process(&mut extended_response);
+                            extended_response.fft_mut();
                         }
                         if let Some(previous_chunk) = &previous_chunk {
                             let mut output_chunk = buf_pool.get_with_capacity(n * 2);
                             output_chunk.extend_from_slice(previous_chunk);
                             output_chunk.extend_from_slice(&input_chunk);
-                            fft.as_ref().unwrap().process(&mut output_chunk);
+                            output_chunk.fft_mut();
                             for i in 0..n * 2 {
                                 output_chunk[i] *= extended_response[i];
                             }
-                            ifft.as_ref().unwrap().process(&mut output_chunk);
+                            output_chunk.ifft_mut();
                             output_chunk.truncate(n);
                             let Ok(()) = sender.send(Signal::Samples {
                                 sample_rate,

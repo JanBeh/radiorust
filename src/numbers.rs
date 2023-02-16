@@ -27,6 +27,7 @@ where
     Self: num::traits::FloatConst,
     Self: num::traits::NumAssignOps,
     Self: FftNum,
+    Self: Default,
 {
 }
 impl<T> Float for T
@@ -36,6 +37,7 @@ where
     T: num::traits::FloatConst,
     T: num::traits::NumAssignOps,
     T: FftNum,
+    Self: Default,
 {
 }
 

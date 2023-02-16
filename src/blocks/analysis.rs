@@ -68,6 +68,7 @@ where
             let mut previous_chunk_len: Option<usize> = None;
             let mut fft_planner = FftPlanner::<Flt>::new();
             let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
+            let mut fft_scratch: Vec<Complex<Flt>> = Vec::new();
             let mut scratch: Vec<f64> = Default::default();
             let mut window_values: Vec<Flt> = Default::default();
             loop {
@@ -80,6 +81,10 @@ where
                         let n: usize = input_chunk.len();
                         if Some(n) != previous_chunk_len {
                             fft = Some(fft_planner.plan_fft_forward(n));
+                            fft_scratch.resize_with(
+                                fft.as_ref().unwrap().get_inplace_scratch_len(),
+                                Default::default,
+                            );
                             scratch.clear();
                             scratch.reserve_exact(n);
                             let mut energy: f64 = 0.0;
@@ -102,7 +107,9 @@ where
                         for idx in 0..n {
                             output_chunk[idx] *= window_values[idx];
                         }
-                        fft.as_ref().unwrap().process(&mut output_chunk);
+                        fft.as_ref()
+                            .unwrap()
+                            .process_with_scratch(&mut output_chunk, &mut fft_scratch);
                         if center_dc {
                             output_chunk.rotate_right(n / 2);
                         }

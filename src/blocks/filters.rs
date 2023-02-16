@@ -166,6 +166,7 @@ where
             let mut fft_planner = FftPlanner::<Flt>::new();
             let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut ifft: Option<Arc<dyn Fft<Flt>>> = Default::default();
+            let mut fft_scratch: Vec<Complex<Flt>> = Vec::new();
             let mut extended_response: Vec<Complex<Flt>> = Default::default();
             loop {
                 let Ok(signal) = receiver.recv().await else { return; };
@@ -196,9 +197,7 @@ where
                                     response[n - i] = freq_resp_func(-(i as isize), -freq) / scale;
                                 }
                             }
-                            fft_planner_f64
-                                .plan_fft_inverse(n)
-                                .process(&mut response);
+                            fft_planner_f64.plan_fft_inverse(n).process(&mut response);
                             for i in 0..(n / 2) {
                                 response.swap(i, i + n / 2);
                             }
@@ -227,17 +226,30 @@ where
                             }));
                             fft = Some(fft_planner.plan_fft_forward(n * 2));
                             ifft = Some(fft_planner.plan_fft_inverse(n * 2));
-                            fft.as_ref().unwrap().process(&mut extended_response);
+                            fft_scratch.resize_with(
+                                fft.as_ref()
+                                    .unwrap()
+                                    .get_inplace_scratch_len()
+                                    .max(ifft.as_ref().unwrap().get_inplace_scratch_len()),
+                                Default::default,
+                            );
+                            fft.as_ref()
+                                .unwrap()
+                                .process_with_scratch(&mut extended_response, &mut fft_scratch);
                         }
                         if let Some(previous_chunk) = &previous_chunk {
                             let mut output_chunk = buf_pool.get_with_capacity(n * 2);
                             output_chunk.extend_from_slice(previous_chunk);
                             output_chunk.extend_from_slice(&input_chunk);
-                            fft.as_ref().unwrap().process(&mut output_chunk);
+                            fft.as_ref()
+                                .unwrap()
+                                .process_with_scratch(&mut output_chunk, &mut fft_scratch);
                             for i in 0..n * 2 {
                                 output_chunk[i] *= extended_response[i];
                             }
-                            ifft.as_ref().unwrap().process(&mut output_chunk);
+                            ifft.as_ref()
+                                .unwrap()
+                                .process_with_scratch(&mut output_chunk, &mut fft_scratch);
                             output_chunk.truncate(n);
                             let Ok(()) = sender.send(Signal::Samples {
                                 sample_rate,

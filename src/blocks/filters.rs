@@ -162,6 +162,8 @@ where
             let mut prev_sample_rate: Option<f64> = None;
             let mut prev_input_chunk_len: Option<usize> = None;
             let mut previous_chunk: Option<Chunk<Complex<Flt>>> = None;
+            let mut fft_planner_f64 = FftPlanner::<f64>::new();
+            let mut fft_planner = FftPlanner::<Flt>::new();
             let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut ifft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut extended_response: Vec<Complex<Flt>> = Default::default();
@@ -194,7 +196,7 @@ where
                                     response[n - i] = freq_resp_func(-(i as isize), -freq) / scale;
                                 }
                             }
-                            FftPlanner::<f64>::new()
+                            fft_planner_f64
                                 .plan_fft_inverse(n)
                                 .process(&mut response);
                             for i in 0..(n / 2) {
@@ -223,8 +225,8 @@ where
                                 re: flt!(x.re),
                                 im: flt!(x.im),
                             }));
-                            fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n * 2));
-                            ifft = Some(FftPlanner::<Flt>::new().plan_fft_inverse(n * 2));
+                            fft = Some(fft_planner.plan_fft_forward(n * 2));
+                            ifft = Some(fft_planner.plan_fft_inverse(n * 2));
                             fft.as_ref().unwrap().process(&mut extended_response);
                         }
                         if let Some(previous_chunk) = &previous_chunk {

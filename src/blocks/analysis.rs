@@ -66,6 +66,7 @@ where
         spawn(async move {
             let mut buf_pool = ChunkBufPool::new();
             let mut previous_chunk_len: Option<usize> = None;
+            let mut fft_planner = FftPlanner::<Flt>::new();
             let mut fft: Option<Arc<dyn Fft<Flt>>> = Default::default();
             let mut scratch: Vec<f64> = Default::default();
             let mut window_values: Vec<Flt> = Default::default();
@@ -78,7 +79,7 @@ where
                     } => {
                         let n: usize = input_chunk.len();
                         if Some(n) != previous_chunk_len {
-                            fft = Some(FftPlanner::<Flt>::new().plan_fft_forward(n));
+                            fft = Some(fft_planner.plan_fft_forward(n));
                             scratch.clear();
                             scratch.reserve_exact(n);
                             let mut energy: f64 = 0.0;
